@@ -17,7 +17,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"
 tempfile = "=3.23.0"
-tokio = { version = "=1.49.0", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"] }
+tokio = { version = "=1.54.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"] }
 toml = "=1.1.6"
 unicode-segmentation = "=1.12.0"
 vector_sdk = { version = "=0.11.0", default-features = false }
