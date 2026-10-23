@@ -284,8 +284,8 @@ impl ConcordAdapter {
             .invite_policy(InvitePolicy::Manual)
             .build()
             .await
-            .map_err(|_| ConcordError::Sdk {
-                operation: "connect Concord SDK",
+            .map_err(|error| ConcordError::Connect {
+                reason: classify_connect_error(&error),
             })?;
         if bot.npub() != expected_npub {
             return Err(ConcordError::IdentityMismatch {
@@ -568,6 +568,63 @@ impl ConcordAdapter {
         for route in &self.routes {
             if route.community_id.as_str() == community_id {
                 self.readiness.insert(route.route_id.clone(), state);
+            }
+        }
+    }
+}
+
+/// Bounded, secret-free reason for an SDK initialization failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConcordConnectFailure {
+    Database,
+    Io,
+    Nostr,
+    Crypto,
+    Network,
+    State,
+    Other,
+}
+
+fn classify_connect_error(error: &vector_sdk::VectorError) -> ConcordConnectFailure {
+    use vector_sdk::VectorError;
+
+    match error {
+        VectorError::Db(_) => ConcordConnectFailure::Database,
+        VectorError::Io(_) => ConcordConnectFailure::Io,
+        VectorError::Nostr(_) => ConcordConnectFailure::Nostr,
+        VectorError::Crypto(_) => ConcordConnectFailure::Crypto,
+        VectorError::Network(_) => ConcordConnectFailure::Network,
+        VectorError::NotInitialized(_) => ConcordConnectFailure::State,
+        // Some vector-core database helpers currently erase their typed error
+        // into `Other`. Inspect only for a fixed classification and never retain
+        // or emit the underlying string, which can contain local paths.
+        VectorError::Other(message) => {
+            let message = message.to_ascii_lowercase();
+            if ["permission denied", "read-only file system", "i/o error"]
+                .iter()
+                .any(|needle| message.contains(needle))
+            {
+                ConcordConnectFailure::Io
+            } else if [
+                "database",
+                "sqlite",
+                "schema",
+                "migration",
+                "profile directory",
+                "account directory",
+                "downgrade",
+            ]
+            .iter()
+            .any(|needle| message.contains(needle))
+            {
+                ConcordConnectFailure::Database
+            } else if ["encrypt", "decrypt", "cipher", "incorrect pin"]
+                .iter()
+                .any(|needle| message.contains(needle))
+            {
+                ConcordConnectFailure::Crypto
+            } else {
+                ConcordConnectFailure::Other
             }
         }
     }
@@ -1007,6 +1064,8 @@ impl ConcordAdapter {
 pub enum ConcordError {
     /// Route definitions overlap or are otherwise unsafe.
     InvalidConfiguration,
+    /// SDK initialization failed; the raw SDK error is deliberately discarded.
+    Connect { reason: ConcordConnectFailure },
     /// A version-specific SDK operation failed; underlying details are omitted.
     Sdk {
         /// Safe operation label.
@@ -1058,6 +1117,9 @@ impl Display for ConcordError {
         match self {
             Self::InvalidConfiguration => {
                 formatter.write_str("invalid Concord adapter configuration")
+            }
+            Self::Connect { reason } => {
+                write!(formatter, "connect Concord SDK failed: {reason:?}")
             }
             Self::Sdk { operation } => write!(formatter, "{operation} failed"),
             Self::IdentityMismatch { expected, actual } => write!(
@@ -1368,6 +1430,35 @@ mod tests {
             vector_sdk::vector_core::logging::log_level(),
             vector_sdk::vector_core::logging::LEVEL_OFF
         );
+    }
+
+    #[test]
+    fn sdk_connect_errors_are_reduced_to_secret_free_categories() {
+        use vector_sdk::VectorError;
+
+        assert_eq!(
+            classify_connect_error(&VectorError::Db("private path".to_owned())),
+            ConcordConnectFailure::Database
+        );
+        assert_eq!(
+            classify_connect_error(&VectorError::Other(
+                "Failed to create profile directory /secret/location".to_owned()
+            )),
+            ConcordConnectFailure::Database
+        );
+        assert_eq!(
+            classify_connect_error(&VectorError::Other(
+                "Failed to create profile directory: permission denied at /secret/location"
+                    .to_owned()
+            )),
+            ConcordConnectFailure::Io
+        );
+        let rendered = ConcordError::Connect {
+            reason: ConcordConnectFailure::Database,
+        }
+        .to_string();
+        assert_eq!(rendered, "connect Concord SDK failed: Database");
+        assert!(!rendered.contains("secret"));
     }
 
     fn route() -> ConcordRoute {

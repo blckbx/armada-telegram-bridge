@@ -59,8 +59,13 @@ is enabled. Do not add raw error/debug logging to diagnose private traffic.
 Startup failures use bounded stage events: `lock_unavailable` (another process
 or unsafe state permissions), `health_bind_failed` (address unavailable),
 `store_failed`, `armada_connect_failed`, and `startup_failed` (transport checks
-or recovery). `runtime_failed` marks unsuccessful process exit without dumping
-the underlying SDK/database error.
+or recovery). SDK initialization may refine `armada_connect_failed` to one of
+`armada_connect_database_failed`, `armada_connect_io_failed`,
+`armada_connect_nostr_failed`, `armada_connect_crypto_failed`,
+`armada_connect_network_failed`, `armada_connect_state_failed`, or
+`armada_connect_sdk_failed`. These are fixed classifications; raw SDK errors,
+paths, and credentials remain suppressed. `runtime_failed` marks unsuccessful
+process exit without dumping the underlying SDK/database error.
 
 SIGINT and SIGTERM stop intake and allow up to ten seconds for immediately
 eligible work/retries to drain. Remaining jobs stay durable. The supervisor

@@ -4,7 +4,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use armada_telegram_bridge::cli::{self, Action};
 use armada_telegram_bridge::clock::SystemClock;
-use armada_telegram_bridge::concord::{ConcordAdapter, ConcordRoute};
+use armada_telegram_bridge::concord::{
+    ConcordAdapter, ConcordConnectFailure, ConcordError, ConcordRoute,
+};
 use armada_telegram_bridge::config::BridgeConfig;
 use armada_telegram_bridge::operations::{self, Health, InstanceLock, LogEvent, structured_log};
 use armada_telegram_bridge::service::{BridgeService, BridgeServiceSettings};
@@ -151,7 +153,7 @@ async fn run(config: BridgeConfig) -> Result<(), Box<dyn std::error::Error>> {
         config.data_dir().join("concord"),
     );
     let concord = tokio::select! {
-        result = connecting => result.inspect_err(|_| log_failure(LogEvent::ArmadaConnectFailed))?,
+        result = connecting => result.inspect_err(|error| log_failure(armada_connect_event(error)))?,
         result = &mut signal => { result??; return Ok(()); }
     };
     let settings = BridgeServiceSettings::from_config(&config)?;
@@ -182,4 +184,22 @@ async fn run(config: BridgeConfig) -> Result<(), Box<dyn std::error::Error>> {
 
 fn log_failure(event: LogEvent) {
     eprintln!("{}", structured_log(event, 0));
+}
+
+fn armada_connect_event(error: &ConcordError) -> LogEvent {
+    match error {
+        ConcordError::Connect { reason } => match reason {
+            ConcordConnectFailure::Database => LogEvent::ArmadaConnectDatabaseFailed,
+            ConcordConnectFailure::Io => LogEvent::ArmadaConnectIoFailed,
+            ConcordConnectFailure::Nostr => LogEvent::ArmadaConnectNostrFailed,
+            ConcordConnectFailure::Crypto => LogEvent::ArmadaConnectCryptoFailed,
+            ConcordConnectFailure::Network => LogEvent::ArmadaConnectNetworkFailed,
+            ConcordConnectFailure::State => LogEvent::ArmadaConnectStateFailed,
+            ConcordConnectFailure::Other => LogEvent::ArmadaConnectSdkFailed,
+        },
+        ConcordError::TemporaryFile => LogEvent::ArmadaConnectIoFailed,
+        ConcordError::IdentityMismatch { .. } => LogEvent::ArmadaConnectNostrFailed,
+        ConcordError::InvalidConfiguration => LogEvent::ArmadaConnectStateFailed,
+        _ => LogEvent::ArmadaConnectFailed,
+    }
 }
