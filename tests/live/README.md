@@ -9,8 +9,9 @@ tests but must not contact a network.
 
 ## P01 Concord setup
 
-Use a disposable identity and private channel. Perform every introduction step
-manually before running a test:
+Use a disposable identity and an exact test channel. The channel may be
+community-visible or separately private, but the bot must be able to read it.
+Perform every introduction step manually before running a test:
 
 1. Create the Nostr keypair outside this repository.
 2. Sign into Armada with that identity and manually accept the intended invite.

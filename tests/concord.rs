@@ -128,7 +128,6 @@ async fn every_unsafe_membership_state_fails_closed() {
     for readiness in [
         ConcordReadiness::MissingCommunity,
         ConcordReadiness::MissingChannel,
-        ConcordReadiness::NotPrivate,
         ConcordReadiness::MissingKey,
         ConcordReadiness::IncompleteRekey,
         ConcordReadiness::Removed,

@@ -215,7 +215,6 @@ pub enum LogEvent {
     StartupTelegramTransportFailed,
     StartupArmadaCommunityMissing,
     StartupArmadaChannelMissing,
-    StartupArmadaChannelNotPrivate,
     StartupArmadaChannelKeyMissing,
     StartupArmadaRekeyIncomplete,
     StartupArmadaMembershipRemoved,

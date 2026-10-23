@@ -75,7 +75,7 @@ async fn configured_channel_can_receive() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "sends the configured marker to a real private Armada channel"]
+#[ignore = "sends the configured marker to a real Armada channel"]
 async fn configured_channel_can_send() {
     let setup = LiveConcordSetup::from_environment();
     let marker = setup.required_send_marker();

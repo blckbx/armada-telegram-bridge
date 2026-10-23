@@ -228,7 +228,6 @@ fn startup_event(error: &ServiceError) -> LogEvent {
         ServiceError::Concord(ConcordError::RouteNotReady { reason, .. }) => match reason {
             ConcordReadiness::MissingCommunity => LogEvent::StartupArmadaCommunityMissing,
             ConcordReadiness::MissingChannel => LogEvent::StartupArmadaChannelMissing,
-            ConcordReadiness::NotPrivate => LogEvent::StartupArmadaChannelNotPrivate,
             ConcordReadiness::MissingKey => LogEvent::StartupArmadaChannelKeyMissing,
             ConcordReadiness::IncompleteRekey => LogEvent::StartupArmadaRekeyIncomplete,
             ConcordReadiness::Removed => LogEvent::StartupArmadaMembershipRemoved,

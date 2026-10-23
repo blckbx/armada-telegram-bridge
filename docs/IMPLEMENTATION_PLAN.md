@@ -620,7 +620,7 @@ The MVP is complete when:
 - the service uses an operator-created Nostr keypair with a manually accepted
   Armada invitation and an operator-created Telegram bot with a manually
   supplied token; it creates or accepts none of these itself;
-- one explicitly configured private Armada channel and one private Telegram
+- one explicitly configured readable Armada channel and one private Telegram
   group exchange new text and files in both directions;
 - both sides show a sanitized display name and stable source identifier;
 - common formatting is preserved and unsupported formatting remains readable;
@@ -635,8 +635,10 @@ The MVP is complete when:
 - the privacy boundary and residual at-least-once duplicate risk are documented.
 
 Deferred by default: reactions, typing/presence, read receipts, large files via a
-local Bot API server, auto-discovered routes, arbitrary public channels,
-and active-active replicas. Automated key generation, Telegram bot creation,
+local Bot API server, auto-discovered routes, and active-active replicas.
+Configured Armada routes may use either community-visible or separately private
+channels; the bridge does not infer or discover additional channels. Automated
+key generation, Telegram bot creation,
 credential acquisition, and Armada invitation acceptance are deliberate
 non-goals rather than deferred features.
 

@@ -21,7 +21,7 @@ manual operator actions.
   a dedicated data directory, and `InvitePolicy::Manual`. Never call identity
   generation or invitation-acceptance APIs.
 - Refresh relay-backed communities before declaring startup ready. Match both
-  canonical community and channel IDs, require a private channel, and use the
+  canonical community and channel IDs, require a readable channel, and use the
   SDK's explicit `is_readable()` value as the key-availability signal.
 - Do not infer missing keys from `CommunityChannel::epoch()`. Live Armada state
   proved that a readable private channel can report epoch `0` through this SDK
@@ -44,7 +44,7 @@ manual operator actions.
 ## Readiness interpretation
 
 The port distinguishes unchecked, ready, missing community, missing channel,
-non-private channel, missing key, incomplete rekey, removed, dissolved, and
+missing key, incomplete rekey, removed, dissolved, and
 stale-state conditions. All except `Ready` block history and sends.
 
 `vector_sdk 0.11.0` does not expose a dedicated incomplete-rekey callback. An

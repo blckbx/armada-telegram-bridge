@@ -5,8 +5,9 @@ release. Passing offline contracts does not certify live protocol behavior.
 No tag, registry publication, bot membership change, or real message send is
 performed by the release tooling.
 
-**Privacy boundary:** Telegram receives readable copies of private Armada
-traffic. **Delivery is at least once:** a destination may accept a send before
+**Privacy boundary:** Telegram receives readable copies of traffic from the
+exact configured Armada channel, whether community-visible or separately
+private. **Delivery is at least once:** a destination may accept a send before
 the bridge commits its receipt; a retry/restart can duplicate that message or
 some chunks/files. Restoring an older backup can replay previously delivered work.
 

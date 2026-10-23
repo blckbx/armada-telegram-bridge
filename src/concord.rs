@@ -80,15 +80,13 @@ impl From<&Route> for ConcordRoute {
 pub enum ConcordReadiness {
     /// The route has not completed recovery yet.
     Unchecked,
-    /// Exact private channel membership and key material are available.
+    /// The exact configured channel is readable by the bridge identity.
     Ready,
     /// The configured community is absent from recovered membership.
     MissingCommunity,
     /// The configured channel is absent from the exact community.
     MissingChannel,
-    /// The channel is public, contrary to the bridge's private-room contract.
-    NotPrivate,
-    /// A private channel is known but its current key is unavailable.
+    /// The channel is known but its required key material is unavailable.
     MissingKey,
     /// A key rotation was observed but could not be completed.
     IncompleteRekey,
@@ -711,7 +709,7 @@ impl ConcordPort for ConcordAdapter {
                     .insert(route.route_id.clone(), ConcordReadiness::MissingChannel);
                 continue;
             };
-            let state = channel_readiness(channel.is_private(), channel.is_readable());
+            let state = channel_readiness(channel.is_readable());
             self.readiness.insert(route.route_id.clone(), state);
         }
         self.first_not_ready()
@@ -1391,13 +1389,11 @@ fn validate_routes(routes: &[ConcordRoute]) -> Result<(), ConcordError> {
     Ok(())
 }
 
-const fn channel_readiness(is_private: bool, is_readable: bool) -> ConcordReadiness {
-    if !is_private {
-        ConcordReadiness::NotPrivate
-    } else if !is_readable {
-        ConcordReadiness::MissingKey
-    } else {
+const fn channel_readiness(is_readable: bool) -> ConcordReadiness {
+    if is_readable {
         ConcordReadiness::Ready
+    } else {
+        ConcordReadiness::MissingKey
     }
 }
 
@@ -1728,9 +1724,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_readability_is_the_private_channel_key_signal() {
-        assert_eq!(channel_readiness(true, true), ConcordReadiness::Ready);
-        assert_eq!(channel_readiness(true, false), ConcordReadiness::MissingKey);
-        assert_eq!(channel_readiness(false, true), ConcordReadiness::NotPrivate);
+    fn explicit_readability_is_the_channel_access_signal() {
+        assert_eq!(channel_readiness(true), ConcordReadiness::Ready);
+        assert_eq!(channel_readiness(false), ConcordReadiness::MissingKey);
     }
 }

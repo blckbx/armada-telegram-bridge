@@ -1,8 +1,10 @@
 # 0.1.0 candidate — unreleased
 
-This candidate bridges one or more explicitly configured private Armada channels
-and Telegram groups/topics with attributed text, common formatting and bounded
-file transfer. Onboarding stays manual: operators provision keys/token and accept
+This candidate bridges one or more explicitly configured, readable Armada
+channels and Telegram groups/topics with attributed text, common formatting and
+bounded file transfer. Armada channels may be community-visible or separately
+private; exact community/channel IDs remain mandatory. Onboarding stays manual:
+operators provision keys/token and accept
 invitations outside the bridge. SQLite delivery state is encrypted, restartable,
 and protected by a single-instance lock. Operators get offline doctor, health,
 aggregate metrics, retries/dead letters, an explicitly acknowledged dead-letter

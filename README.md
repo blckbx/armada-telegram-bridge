@@ -36,6 +36,7 @@ P12 release tooling and offline regression gates are in place. This is still an
 and [known limitations](docs/KNOWN_LIMITATIONS.md) for pending live/deployment gates.
 
 > [!IMPORTANT]
-> Bridging a Concord-encrypted Armada channel to Telegram changes the privacy
-> boundary: the bridge decrypts messages and Telegram receives readable copies.
+> Bridging an Armada channel to Telegram changes the privacy boundary: the
+> bridge reads messages and Telegram receives readable copies. Channel
+> visibility remains governed by the configured Armada community and channel.
 > Only deploy it with the informed consent of both communities.

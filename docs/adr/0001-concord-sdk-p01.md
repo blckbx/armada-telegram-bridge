@@ -25,7 +25,7 @@ channel key recovery, authenticated inner authors, history, and sends.
 - Set `InvitePolicy::Manual` explicitly. The probe never calls identity
   generation, `accept_invite`, `public`, or `whitelist` APIs.
 - Call `sync_communities`, then select the community and channel by exact
-  canonical IDs and require the private channel to be readable.
+  canonical IDs and require the selected channel to be readable.
 - Query only the configured channel and surface the SDK-provided inner author.
 - Keep SDK types inside `concord_probe` now and the `ConcordPort` adapter in P05.
 
@@ -51,13 +51,13 @@ Live evidence recorded on 2026-10-22:
   private community/channel with real relay access;
 - the test used a new temporary SDK data directory, proving recovery from
   relay-backed state rather than reuse of a local database; and
-- exact canonical community/channel selection returned a private, readable
+- exact canonical community/channel selection returned a readable
   channel for the configured identity.
 
 P05 reran membership recovery and a bounded history sync through the production
 `ConcordAdapter` on 2026-10-22. Both passed with a fresh SDK data directory.
 The live state also established that `is_readable()` is the authoritative key
-signal: this Armada-compatible private channel is readable while the SDK
+signal: this Armada-compatible channel is readable while the SDK
 reports epoch `0`, so consumers must not infer missing key material from the
 epoch value alone.
 
