@@ -354,7 +354,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
     let mut message = telegram_message(7, 8, Some(77), Some("bob_bot"), None, "hello");
     assert_eq!(
         render_attributed(&message.event).expect("Telegram attribution renders"),
-        "✈️ @bob\\_bot (tg:77)\nhello"
+        "✈️ @bob\\_bot\nhello"
     );
 
     message.event.sender = SenderIdentity::Telegram {
@@ -367,7 +367,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
     assert_eq!(rendered.lines().count(), 2);
     assert_eq!(
         rendered,
-        "✈️ \\[Admin\\]\\(https://invalid\\) forged (tg:77)\nhello"
+        "✈️ \\[Admin\\]\\(https://invalid\\) forged\nhello"
     );
 }
 
@@ -438,10 +438,7 @@ async fn rich_text_crosses_both_transports_and_long_armada_text_splits_safely() 
         .dispatch_pending()
         .await
         .expect("Telegram rich text dispatches");
-    assert_eq!(
-        service.concord().sent()[0].1,
-        "✈️ @bob (tg:41)\n**😀** hello"
-    );
+    assert_eq!(service.concord().sent()[0].1, "✈️ @bob\n**😀** hello");
 
     let long_body = format!("**{}**", "word 👨‍👩‍👧‍👦 ".repeat(500));
     let long = armada_message("long", "cursor-long", ALICE_NPUB, Some("Alice"), &long_body);
@@ -585,10 +582,7 @@ async fn boundary_sized_attachments_cross_both_directions_and_plaintext_is_clean
         .await
         .expect("Telegram attachment dispatches");
 
-    assert_eq!(
-        service.concord().sent()[0].1,
-        "✈️ @bob (tg:41)\nquarterly report"
-    );
+    assert_eq!(service.concord().sent()[0].1, "✈️ @bob\nquarterly report");
     let sent = &service.concord().sent_attachments()[0];
     assert_eq!(sent.bytes, pdf);
     assert_eq!(sent.metadata.file_name, "report.pdf");
@@ -790,7 +784,7 @@ async fn plaintext_bridge_baselines_relays_links_and_deduplicates_across_restart
     assert_eq!(service.concord().sent().len(), 1);
     assert_eq!(
         service.concord().sent()[0].1,
-        "✈️ Bob Builder (tg:41)\nhello from Telegram"
+        "✈️ Bob Builder\nhello from Telegram"
     );
 
     let armada_link = service
@@ -1662,7 +1656,7 @@ async fn telegram_reaction_updates_are_durable_and_summarized_in_armada() {
         (
             route_id(),
             format!("{:064x}", 1),
-            "Reactions from Telegram: 👍 @bob".to_owned(),
+            "Reactions: 👍 @bob".to_owned(),
         )
     );
     assert_eq!(service.telegram().next_offset(), Some(72));
@@ -1692,10 +1686,7 @@ async fn telegram_reaction_updates_are_durable_and_summarized_in_armada() {
         .dispatch_pending()
         .await
         .expect("combined summary dispatched");
-    assert_eq!(
-        service.concord().edits()[0].2,
-        "Reactions from Telegram: ❤️ 3 anonymous"
-    );
+    assert_eq!(service.concord().edits()[0].2, "Reactions: ❤️ 3 anonymous");
 }
 
 #[tokio::test]

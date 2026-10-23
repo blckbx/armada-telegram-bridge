@@ -112,8 +112,8 @@ attempt is exhausted, inspect and either retry or explicitly skip its job.
 
 The bridge renders reactions as one reply beneath the mapped message, for
 example `Reactions from Armada: 👍 Alice`. It edits that reply as the source
-reaction set changes and deletes it when the set becomes empty. The reverse
-direction uses `Reactions from Telegram: …`. These are bridge-authored text
+reaction set changes and deletes it when the set becomes empty. In Armada, the
+reverse direction uses the shorter `Reactions: …`. These are bridge-authored text
 summaries, not native destination reactions.
 
 Promote the Telegram bot to group administrator before relying on reactions;

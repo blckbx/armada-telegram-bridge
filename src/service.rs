@@ -2034,11 +2034,10 @@ fn render_reaction_summary(
         }
         grouped.entry(emoji).or_default().push(actor);
     }
-    let source = match direction {
-        DeliveryDirection::ArmadaToTelegram => "Armada",
-        DeliveryDirection::TelegramToArmada => "Telegram",
+    let mut rendered = match direction {
+        DeliveryDirection::ArmadaToTelegram => "Reactions from Armada: ".to_owned(),
+        DeliveryDirection::TelegramToArmada => "Reactions: ".to_owned(),
     };
-    let mut rendered = format!("Reactions from {source}: ");
     for (index, (emoji, mut actors)) in grouped.into_iter().enumerate() {
         actors.sort();
         actors.dedup();
@@ -2076,15 +2075,18 @@ fn attribution_header(event: &BridgeEvent) -> Option<String> {
             username,
             display_name,
         } if event.source == Source::Telegram => {
-            let stable = user_id
-                .map(|id| format!("tg:{id}"))
-                .or_else(|| sender_chat_id.map(|id| format!("tg-chat:{id}")))?;
+            // A stable Telegram identity is required for attribution and
+            // deduplication, but its numeric ID is an internal detail and is
+            // intentionally not exposed in the Armada message header.
+            if user_id.is_none() && sender_chat_id.is_none() {
+                return None;
+            }
             let name = clean_header(username.as_deref())
                 .map(|name| format!("@{}", name.trim_start_matches('@')))
                 .or_else(|| clean_header(display_name.as_deref()))
                 .unwrap_or_else(|| "Telegram user".into());
             let name = escape_armada_header(&name);
-            Some(format!("✈️ {name} ({stable})"))
+            Some(format!("✈️ {name}"))
         }
         _ => None,
     }
