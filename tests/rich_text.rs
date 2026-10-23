@@ -87,6 +87,47 @@ fn unsafe_links_and_directional_controls_cannot_spoof_output() {
 }
 
 #[test]
+fn telegram_autolinks_remain_plain_urls_in_armada_markdown() {
+    let url = "https://armada.buzz";
+    for telegram_entity in [
+        TelegramEntity {
+            kind: TelegramEntityKind::Url,
+            offset: 0,
+            length: 19,
+            url: None,
+            language: None,
+        },
+        TelegramEntity {
+            kind: TelegramEntityKind::TextLink,
+            offset: 0,
+            length: 19,
+            url: Some(url.to_owned()),
+            language: None,
+        },
+    ] {
+        let parsed = from_telegram(url, &[telegram_entity]).expect("URL entity is valid");
+        assert_eq!(parsed.spans, Vec::new());
+        assert_eq!(render_armada_markdown(&parsed), url);
+    }
+
+    let labelled = from_telegram(
+        "Armada",
+        &[TelegramEntity {
+            kind: TelegramEntityKind::TextLink,
+            offset: 0,
+            length: 6,
+            url: Some(url.to_owned()),
+            language: None,
+        }],
+    )
+    .expect("labelled link is valid");
+    assert_eq!(
+        render_armada_markdown(&labelled),
+        "[Armada](https://armada.buzz)"
+    );
+}
+
+#[test]
 fn crossings_are_resolved_deterministically_and_nested_ranges_remain_valid() {
     let rich = RichText {
         text: "abcdef".to_owned(),

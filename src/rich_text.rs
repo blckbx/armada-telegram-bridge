@@ -227,31 +227,33 @@ pub fn from_telegram(text: &str, entities: &[TelegramEntity]) -> Result<RichText
             continue;
         }
         let visible = &text[start_byte..end_byte];
-        let style =
-            match entity.kind {
-                TelegramEntityKind::Bold => Some(RichStyle::Bold),
-                TelegramEntityKind::Italic => Some(RichStyle::Italic),
-                TelegramEntityKind::Underline => Some(RichStyle::Underline),
-                TelegramEntityKind::Strikethrough => Some(RichStyle::Strikethrough),
-                TelegramEntityKind::Spoiler => Some(RichStyle::Spoiler),
-                TelegramEntityKind::Code => Some(RichStyle::Code),
-                TelegramEntityKind::Pre => Some(RichStyle::Pre {
-                    language: entity.language.as_deref().and_then(valid_language),
+        let style = match entity.kind {
+            TelegramEntityKind::Bold => Some(RichStyle::Bold),
+            TelegramEntityKind::Italic => Some(RichStyle::Italic),
+            TelegramEntityKind::Underline => Some(RichStyle::Underline),
+            TelegramEntityKind::Strikethrough => Some(RichStyle::Strikethrough),
+            TelegramEntityKind::Spoiler => Some(RichStyle::Spoiler),
+            TelegramEntityKind::Code => Some(RichStyle::Code),
+            TelegramEntityKind::Pre => Some(RichStyle::Pre {
+                language: entity.language.as_deref().and_then(valid_language),
+            }),
+            TelegramEntityKind::TextLink => entity
+                .url
+                .as_deref()
+                .filter(|url| safe_url(url))
+                .filter(|url| *url != visible)
+                .map(|url| RichStyle::Link {
+                    url: url.to_owned(),
                 }),
-                TelegramEntityKind::TextLink => entity
-                    .url
-                    .as_deref()
-                    .filter(|url| safe_url(url))
-                    .map(|url| RichStyle::Link {
-                        url: url.to_owned(),
-                    }),
-                TelegramEntityKind::Url => safe_url(visible).then(|| RichStyle::Link {
-                    url: visible.to_owned(),
-                }),
-                TelegramEntityKind::Blockquote | TelegramEntityKind::ExpandableBlockquote => {
-                    Some(RichStyle::Quote)
-                }
-            };
+            // Telegram marks automatically detected URLs as entities even
+            // though the visible text already is the complete target.
+            // Armada recognizes the plain URL; wrapping it as `[url](url)`
+            // produces redundant or partially nested link rendering.
+            TelegramEntityKind::Url => None,
+            TelegramEntityKind::Blockquote | TelegramEntityKind::ExpandableBlockquote => {
+                Some(RichStyle::Quote)
+            }
+        };
         if let Some(style) = style {
             spans.push(RichSpan {
                 start: start_byte,
