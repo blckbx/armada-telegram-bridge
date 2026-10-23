@@ -1,0 +1,27 @@
+name: Build release evidence (no publication)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Export OCI image with SBOM and provenance
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          outputs: type=oci,dest=bridge-image.tar
+          provenance: mode=max
+          sbom: true
+      - name: Hash exported evidence
+        run: sha256sum bridge-image.tar > bridge-image.tar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-image-evidence
+          path: |
+            bridge-image.tar
+            bridge-image.tar.sha256

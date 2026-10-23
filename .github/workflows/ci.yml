@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --locked --all-targets --all-features
+
+      - name: Artifact generator tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Source SBOM and notices
+        run: |
+          cargo fetch --locked
+          python3 scripts/release_artifacts.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-source-sbom
+          path: release-artifacts/
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Install pinned scanners
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          go install github.com/zricethezav/gitleaks/v8@v8.24.3
+      - name: Dependency advisories, licenses, and sources
+        run: cargo deny --locked check
+      - name: Source and history secret scans
+        run: |
+          gitleaks dir . --config .gitleaks.toml --redact=100 --no-banner
+          gitleaks git . --config .gitleaks.toml --redact=100 --no-banner
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo fuzz run rich_text -- -max_total_time=30 -max_len=8192 -print_funcs=0
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: docker build -t armada-telegram-bridge:p11 .
+      - run: cargo test --locked --test config container_doctor_smoke -- --ignored --exact

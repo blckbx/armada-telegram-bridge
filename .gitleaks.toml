@@ -1,0 +1,13 @@
+title = "Bridge release source scan"
+[extend]
+useDefault = true
+
+[[rules]]
+id = "nostr-private-key"
+description = "Nostr private key"
+regex = '''nsec1[023456789acdefghjklmnpqrstuvwxyz]{58}'''
+
+# Exact public test vector only, not a directory-wide exemption.
+[[rules.allowlists]]
+regexTarget = "match"
+regexes = ['''^nsec1j4c6269y9w0q2er2xjw8sv2ehyrtfxq3jwgdlxj6qfn8z4gjsq5qfvfk99$''']

@@ -1,0 +1,37 @@
+services:
+  bridge:
+    build:
+      context: ..
+    image: armada-telegram-bridge:p11
+    # Match the owner of the bind-mounted mode-0600 .env and mode-0700 state.
+    user: "${BRIDGE_UID:-10001}:${BRIDGE_GID:-10001}"
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${BRIDGE_CONFIG_DIR:?set an absolute configuration directory}
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BRIDGE_STATE_DIR:?set an absolute private state directory}
+        target: /state
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:9090:9090"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

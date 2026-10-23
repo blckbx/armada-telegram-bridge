@@ -1,0 +1,9 @@
+**
+!Cargo.toml
+!Cargo.lock
+!src/
+!src/**
+!Dockerfile
+!LICENSE
+!scripts/
+!scripts/release_artifacts.py

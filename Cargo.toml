@@ -1,0 +1,42 @@
+[package]
+name = "armada-telegram-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+description = "A bidirectional bridge between Armada and Telegram"
+publish = false
+
+[dependencies]
+async-trait = "=0.1.92"
+chacha20poly1305 = { version = "=0.10.1", features = ["std"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+rusqlite = { version = "=0.38.0", features = ["bundled"] }
+rustix = { version = "=1.1.5", features = ["fs"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.10.9"
+tempfile = "=3.23.0"
+tokio = { version = "=1.49.0", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"] }
+toml = "=1.1.6"
+unicode-segmentation = "=1.12.0"
+vector_sdk = { version = "=0.11.0", default-features = false }
+zeroize = "=1.9.1"
+
+[dev-dependencies]
+dotenvy = "=0.15.7"
+
+[lib]
+name = "armada_telegram_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "armada-telegram-bridge"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

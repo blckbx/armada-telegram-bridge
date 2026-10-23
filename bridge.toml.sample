@@ -1,0 +1,32 @@
+# Copy to bridge.toml and replace every placeholder.
+# Credentials belong in the mode-0600 .env beside bridge.toml, not here.
+version = 1
+data_dir = "./data"
+# Health and metrics are unauthenticated: keep loopback or a trusted network.
+health_listen = "127.0.0.1:9090"
+
+[nostr]
+expected_npub = "<npub1...>"
+
+[telegram]
+expected_bot_id = 123456789
+mode = "long_polling"
+protect_content = true
+relay_other_bots = false
+
+[[routes]]
+name = "private-community"
+community_id = "<64-character-lowercase-hex-community-id>"
+channel_id = "<64-character-lowercase-hex-channel-id>"
+telegram_chat_id = -1001234567890
+# telegram_thread_id = 42
+
+[limits]
+max_text_bytes = 60000
+max_file_bytes = 20000000
+max_pending_jobs = 500
+max_catchup_age_hours = 24
+max_catchup_events = 1000
+
+[startup]
+first_run = "new_messages_only"

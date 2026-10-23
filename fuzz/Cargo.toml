@@ -1,0 +1,22 @@
+[package]
+name = "armada-bridge-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.10"
+armada-telegram-bridge = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "rich_text"
+path = "fuzz_targets/rich_text.rs"
+test = false
+doc = false
+bench = false

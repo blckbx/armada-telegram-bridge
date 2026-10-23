@@ -1,0 +1,13 @@
+/target/
+.env
+!.env.sample
+/bridge.toml
+/data/
+/release-artifacts/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/rich_text/*
+!/fuzz/corpus/rich_text/nested-markup
+__pycache__/
+*.db-shm
+*.db-wal

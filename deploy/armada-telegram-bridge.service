@@ -1,0 +1,46 @@
+[Unit]
+Description=Private Armada Telegram bridge
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=armada-bridge
+Group=armada-bridge
+UMask=0077
+StateDirectory=armada-telegram-bridge
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/armada-telegram-bridge
+ExecStartPre=/usr/local/bin/armada-telegram-bridge doctor --config /etc/armada-telegram-bridge/bridge.toml
+ExecStart=/usr/local/bin/armada-telegram-bridge --config /etc/armada-telegram-bridge/bridge.toml
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+TasksMax=128
+MemoryMax=1G
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
