@@ -5,13 +5,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use armada_telegram_bridge::cli::{self, Action};
 use armada_telegram_bridge::clock::SystemClock;
 use armada_telegram_bridge::concord::{
-    ConcordAdapter, ConcordConnectFailure, ConcordError, ConcordRoute,
+    ConcordAdapter, ConcordConnectFailure, ConcordError, ConcordReadiness, ConcordRoute,
 };
 use armada_telegram_bridge::config::BridgeConfig;
 use armada_telegram_bridge::operations::{self, Health, InstanceLock, LogEvent, structured_log};
-use armada_telegram_bridge::service::{BridgeService, BridgeServiceSettings};
+use armada_telegram_bridge::service::{BridgeService, BridgeServiceSettings, ServiceError};
 use armada_telegram_bridge::store::{JobId, RouteState, Store};
-use armada_telegram_bridge::telegram::{TelegramAdapter, TelegramRoute};
+use armada_telegram_bridge::telegram::{TelegramAdapter, TelegramError, TelegramRoute};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -160,7 +160,7 @@ async fn run(config: BridgeConfig) -> Result<(), Box<dyn std::error::Error>> {
     let mut service = BridgeService::new(store, telegram, concord, SystemClock, settings);
     service.set_health(health.clone());
     tokio::select! {
-        result = service.initialize() => { result.inspect_err(|_| log_failure(LogEvent::StartupFailed))?; },
+        result = service.initialize() => { result.inspect_err(|error| log_failure(startup_event(error)))?; },
         result = &mut signal => { result??; return Ok(()); }
     }
     eprintln!("{}", structured_log(LogEvent::Ready, 0));
@@ -201,5 +201,48 @@ fn armada_connect_event(error: &ConcordError) -> LogEvent {
         ConcordError::IdentityMismatch { .. } => LogEvent::ArmadaConnectNostrFailed,
         ConcordError::InvalidConfiguration => LogEvent::ArmadaConnectStateFailed,
         _ => LogEvent::ArmadaConnectFailed,
+    }
+}
+
+fn startup_event(error: &ServiceError) -> LogEvent {
+    match error {
+        ServiceError::TelegramIdentityMismatch
+        | ServiceError::Telegram(TelegramError::IdentityMismatch { .. }) => {
+            LogEvent::StartupTelegramIdentityFailed
+        }
+        ServiceError::Telegram(TelegramError::Terminal { status: 409 }) => {
+            LogEvent::StartupTelegramConflict
+        }
+        ServiceError::Telegram(TelegramError::Terminal { status: 401 }) => {
+            LogEvent::StartupTelegramAuthenticationFailed
+        }
+        ServiceError::Telegram(TelegramError::Terminal { status: 400 | 403 }) => {
+            LogEvent::StartupTelegramAccessFailed
+        }
+        ServiceError::Telegram(
+            TelegramError::RateLimited { .. }
+            | TelegramError::Retryable { .. }
+            | TelegramError::Timeout
+            | TelegramError::Transport,
+        ) => LogEvent::StartupTelegramTransportFailed,
+        ServiceError::Concord(ConcordError::RouteNotReady { reason, .. }) => match reason {
+            ConcordReadiness::MissingCommunity => LogEvent::StartupArmadaCommunityMissing,
+            ConcordReadiness::MissingChannel => LogEvent::StartupArmadaChannelMissing,
+            ConcordReadiness::NotPrivate => LogEvent::StartupArmadaChannelNotPrivate,
+            ConcordReadiness::MissingKey => LogEvent::StartupArmadaChannelKeyMissing,
+            ConcordReadiness::IncompleteRekey => LogEvent::StartupArmadaRekeyIncomplete,
+            ConcordReadiness::Removed => LogEvent::StartupArmadaMembershipRemoved,
+            ConcordReadiness::Dissolved => LogEvent::StartupArmadaCommunityDissolved,
+            ConcordReadiness::StaleState | ConcordReadiness::Unchecked => {
+                LogEvent::StartupArmadaStateStale
+            }
+            ConcordReadiness::Ready => LogEvent::StartupFailed,
+        },
+        ServiceError::Concord(ConcordError::Sdk { .. }) => LogEvent::StartupArmadaSdkFailed,
+        ServiceError::RouteQuarantined(_) => LogEvent::StartupRouteQuarantined,
+        ServiceError::Store(_)
+        | ServiceError::InvalidTelegramCursor
+        | ServiceError::QueueSaturated => LogEvent::StartupStateFailed,
+        _ => LogEvent::StartupFailed,
     }
 }

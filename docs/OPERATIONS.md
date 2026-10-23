@@ -67,6 +67,13 @@ or recovery). SDK initialization may refine `armada_connect_failed` to one of
 paths, and credentials remain suppressed. `runtime_failed` marks unsuccessful
 process exit without dumping the underlying SDK/database error.
 
+Startup verification likewise refines `startup_failed` into fixed Telegram,
+Armada membership/key-state, route-quarantine, and durable-state events. In
+particular, `startup_telegram_conflict` means another long poller or a webhook
+is using the bot, while `startup_armada_state_stale` means relay-backed
+community synchronization did not complete. These events contain no dynamic
+identifiers or transport error text.
+
 SIGINT and SIGTERM stop intake and allow up to ten seconds for immediately
 eligible work/retries to drain. Remaining jobs stay durable. The supervisor
 should allow at least twenty seconds. A forced kill or ambiguous network result
