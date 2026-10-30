@@ -2133,15 +2133,24 @@ fn attribution_header(event: &BridgeEvent) -> Option<String> {
             if user_id.is_none() && sender_chat_id.is_none() {
                 return None;
             }
-            let handle = clean_header(username.as_deref())
-                .map(|name| format!("@{}", name.trim_start_matches('@')));
-            let display_name = clean_header(display_name.as_deref());
+            let handle = clean_header(username.as_deref()).map(|name| {
+                let name = name.trim_start_matches('@');
+                // Reply previews show the raw message, including Markdown escapes.
+                // Telegram handles contain only letters, digits, and underscores.
+                let name = if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    name.to_owned()
+                } else {
+                    escape_armada_header(name)
+                };
+                format!("@{name}")
+            });
+            let display_name =
+                clean_header(display_name.as_deref()).map(|name| escape_armada_header(&name));
             let name = match (handle, display_name) {
-                (Some(handle), Some(display_name)) => format!("{handle} ({display_name})"),
+                (Some(handle), Some(display_name)) => format!("{handle} \\({display_name}\\)"),
                 (Some(name), None) | (None, Some(name)) => name,
                 (None, None) => "Telegram user".into(),
             };
-            let name = escape_armada_header(&name);
             Some(format!("✈️ {name}"))
         }
         _ => None,

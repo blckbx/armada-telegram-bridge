@@ -354,7 +354,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
     let mut message = telegram_message(7, 8, Some(77), Some("bob_bot"), None, "hello");
     assert_eq!(
         render_attributed(&message.event).expect("Telegram attribution renders"),
-        "✈️ @bob\\_bot\nhello"
+        "✈️ @bob_bot\nhello"
     );
 
     for (username, display_name, expected) in [
@@ -366,7 +366,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
         (
             Some("bob_bot"),
             Some("[Bob]\n\u{202e}Builder"),
-            "✈️ @bob\\_bot \\(\\[Bob\\] Builder\\)\nhello",
+            "✈️ @bob_bot \\(\\[Bob\\] Builder\\)\nhello",
         ),
         (Some("bob"), Some(" \n "), "✈️ @bob\nhello"),
         (None, Some("Steffen"), "✈️ Steffen\nhello"),
@@ -1488,25 +1488,27 @@ async fn telegram_conversation_mutations_use_mapped_armada_messages() {
         70,
         71,
         Some(41),
-        Some("alice"),
+        Some("wario_is_here"),
         None,
         "hello",
     ));
     service.poll_telegram_once().await.expect("create accepted");
     service.dispatch_pending().await.expect("create dispatches");
+    assert_eq!(service.concord().sent()[0].1, "✈️ @wario_is_here\nhello");
     let armada_target = format!("{:064x}", 1);
 
     let source_target = SourceMessageRef {
         source: Source::Telegram,
         source_event_id: format!("telegram:{CHAT_ID}:70"),
     };
-    let mut reply = telegram_message(71, 72, Some(42), Some("bob"), None, "answer");
+    let mut reply = telegram_message(71, 72, Some(42), Some("reply_user"), None, "answer");
     reply.event.reply_to = Some(source_target.clone());
     reply.event.reply_quote = Some("hello".to_owned());
     service.telegram_mut().push_inbound(reply);
     service.poll_telegram_once().await.expect("reply accepted");
     service.dispatch_pending().await.expect("reply dispatches");
     assert_eq!(service.concord().replies()[0].1, armada_target);
+    assert_eq!(service.concord().replies()[0].2, "✈️ @reply_user\nanswer");
 
     let mut edit = telegram_message(72, 73, Some(41), Some("alice"), None, "fixed");
     edit.event.source_event_id = format!("telegram:edit:{CHAT_ID}:70:72");
