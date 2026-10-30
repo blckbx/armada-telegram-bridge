@@ -357,6 +357,30 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
         "✈️ @bob\\_bot\nhello"
     );
 
+    for (username, display_name, expected) in [
+        (
+            Some("steff2021"),
+            Some("Steffen"),
+            "✈️ @steff2021 \\(Steffen\\)\nhello",
+        ),
+        (
+            Some("bob_bot"),
+            Some("[Bob]\n\u{202e}Builder"),
+            "✈️ @bob\\_bot \\(\\[Bob\\] Builder\\)\nhello",
+        ),
+        (Some("bob"), Some(" \n "), "✈️ @bob\nhello"),
+        (None, Some("Steffen"), "✈️ Steffen\nhello"),
+        (None, None, "✈️ Telegram user\nhello"),
+    ] {
+        message.event.sender = SenderIdentity::Telegram {
+            user_id: Some(77),
+            sender_chat_id: None,
+            username: username.map(str::to_owned),
+            display_name: display_name.map(str::to_owned),
+        };
+        assert_eq!(render_attributed(&message.event).as_deref(), Some(expected));
+    }
+
     message.event.sender = SenderIdentity::Telegram {
         user_id: Some(77),
         sender_chat_id: None,
@@ -424,7 +448,14 @@ async fn rich_text_crosses_both_transports_and_long_armada_text_splits_safely() 
         url: None,
         language: None,
     }];
-    let mut telegram = telegram_message(91, 92, Some(41), Some("bob"), None, "😀 hello");
+    let mut telegram = telegram_message(
+        91,
+        92,
+        Some(41),
+        Some("bob"),
+        Some("Bob Builder"),
+        "😀 hello",
+    );
     telegram.event.rich_text = Some(
         from_telegram(&telegram.event.body, &telegram_entities)
             .expect("Telegram UTF-16 entity is valid"),
@@ -438,7 +469,10 @@ async fn rich_text_crosses_both_transports_and_long_armada_text_splits_safely() 
         .dispatch_pending()
         .await
         .expect("Telegram rich text dispatches");
-    assert_eq!(service.concord().sent()[0].1, "✈️ @bob\n**😀** hello");
+    assert_eq!(
+        service.concord().sent()[0].1,
+        "✈️ @bob \\(Bob Builder\\)\n**😀** hello"
+    );
 
     let long_body = format!("**{}**", "word 👨‍👩‍👧‍👦 ".repeat(500));
     let long = armada_message("long", "cursor-long", ALICE_NPUB, Some("Alice"), &long_body);

@@ -2133,10 +2133,14 @@ fn attribution_header(event: &BridgeEvent) -> Option<String> {
             if user_id.is_none() && sender_chat_id.is_none() {
                 return None;
             }
-            let name = clean_header(username.as_deref())
-                .map(|name| format!("@{}", name.trim_start_matches('@')))
-                .or_else(|| clean_header(display_name.as_deref()))
-                .unwrap_or_else(|| "Telegram user".into());
+            let handle = clean_header(username.as_deref())
+                .map(|name| format!("@{}", name.trim_start_matches('@')));
+            let display_name = clean_header(display_name.as_deref());
+            let name = match (handle, display_name) {
+                (Some(handle), Some(display_name)) => format!("{handle} ({display_name})"),
+                (Some(name), None) | (None, Some(name)) => name,
+                (None, None) => "Telegram user".into(),
+            };
             let name = escape_armada_header(&name);
             Some(format!("✈️ {name}"))
         }
