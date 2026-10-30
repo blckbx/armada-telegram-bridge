@@ -1170,6 +1170,29 @@ impl Store {
         Ok(())
     }
 
+    /// Whether the preceding delivered message on this route and direction has
+    /// the same stable author as this job. Failed and skipped jobs do not count.
+    ///
+    /// # Errors
+    /// Returns a database error if the query cannot complete.
+    pub fn follows_same_author(&self, job_id: JobId) -> Result<bool, StoreError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM outbox_jobs o
+                JOIN inbox_events i ON i.id = o.inbox_event_id
+                WHERE o.id = ?1 AND i.source_author_id != ''
+                  AND i.source_author_id = (
+                      SELECT m.source_author_id FROM message_links m
+                      WHERE m.route_id = o.route_id AND m.direction = o.direction
+                        AND m.job_id < o.id
+                      ORDER BY m.job_id DESC LIMIT 1
+                  )
+            )",
+            [job_id.get()],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Looks up the durable destination mapping for a source message.
     ///
     /// # Errors

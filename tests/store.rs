@@ -665,3 +665,61 @@ fn payloads_are_encrypted_at_rest_and_erased_after_delivery_retention() {
     assert_eq!(cleaned.status, JobStatus::Delivered);
     assert!(cleaned.payload.is_none());
 }
+
+#[test]
+fn sender_grouping_is_route_scoped_and_ignores_skipped_deliveries() {
+    let data = tempfile::tempdir().expect("directory");
+    let mut store = Store::open(data.path()).expect("store");
+    let alpha = route("alpha");
+    let beta = route("beta");
+    store.register_route(&alpha).expect("alpha");
+    store.register_route(&beta).expect("beta");
+    let direction = DeliveryDirection::TelegramToArmada;
+    for (id, route_id, author, expected, skip) in [
+        (1, &alpha, "alice", false, false),
+        (2, &beta, "alice", false, false),
+        (3, &alpha, "bob", false, true),
+        (4, &alpha, "alice", true, false),
+        (5, &alpha, "bob", false, false),
+        (6, &alpha, "alice", false, false),
+    ] {
+        let AcceptOutcome::Enqueued(job) = store
+            .accept_inbound(
+                &delivery(
+                    route_id,
+                    direction,
+                    &format!("telegram:{id}"),
+                    "body",
+                    &id.to_string(),
+                    id,
+                )
+                .with_source_author(author),
+            )
+            .expect("intake")
+        else {
+            panic!("new job expected")
+        };
+        assert_eq!(store.follows_same_author(job).expect("grouping"), expected);
+        if skip {
+            store
+                .mark_dead_letter(job, "send_failed", false, id)
+                .expect("dead letter");
+            store.skip_dead_letter(job, id).expect("skip");
+        } else {
+            store
+                .mark_delivered(job, &format!("armada:{id}"), id)
+                .expect("delivery");
+        }
+    }
+    store.cleanup_delivered_payloads(100).expect("cleanup");
+    let job = store
+        .message_link(&alpha, direction, "telegram:4")
+        .expect("link")
+        .expect("exists")
+        .job_id;
+    assert!(
+        store
+            .follows_same_author(job)
+            .expect("grouping survives cleanup")
+    );
+}

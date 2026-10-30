@@ -1840,3 +1840,133 @@ async fn expiring_armada_mirror_is_deleted_after_restart() {
         .expect("completed deletion is idempotent");
     assert_eq!(restarted.telegram().deletions().len(), 1);
 }
+
+#[tokio::test]
+async fn telegram_followups_group_by_stable_sender_across_restart_and_edits() {
+    let data = tempfile::tempdir().expect("directory");
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("store"),
+        telegram_fake(),
+        concord_fake(),
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("initialize");
+    for (id, user, name, body) in [
+        (1, 41, "alice", "first"),
+        (2, 41, "renamed", "**second**"),
+        (3, 42, "renamed", "different sender"),
+        (4, 41, "alice", "back again"),
+    ] {
+        service.telegram_mut().push_inbound(telegram_message(
+            id,
+            id + 1,
+            Some(user),
+            Some(name),
+            None,
+            body,
+        ));
+    }
+    service.poll_telegram_once().await.expect("intake");
+    service.dispatch_pending().await.expect("dispatch");
+    let texts: Vec<_> = service
+        .concord()
+        .sent()
+        .iter()
+        .map(|sent| sent.1.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "✈️ @alice\nfirst",
+            "\\*\\*second\\*\\*",
+            "✈️ @renamed\ndifferent sender",
+            "✈️ @alice\nback again"
+        ]
+    );
+    let concord = std::mem::replace(service.concord_mut(), concord_fake());
+    drop(service);
+
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("reopen"),
+        telegram_fake(),
+        concord,
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("restart");
+    service.telegram_mut().push_inbound(telegram_message(
+        5,
+        6,
+        Some(41),
+        Some("alice"),
+        None,
+        "after restart",
+    ));
+    service.poll_telegram_once().await.expect("intake");
+    service.dispatch_pending().await.expect("dispatch");
+    assert_eq!(service.concord().sent()[4].1, "after restart");
+
+    for id in [1, 2] {
+        let mut edit = telegram_message(10 + id, 11 + id, Some(41), Some("alice"), None, "edited");
+        edit.event.source_event_id = format!("telegram:edit:{CHAT_ID}:{id}:{}", 10 + id);
+        edit.event.mutation = Mutation::Edit;
+        edit.event.mutation_target = Some(SourceMessageRef {
+            source: Source::Telegram,
+            source_event_id: format!("telegram:{CHAT_ID}:{id}"),
+        });
+        service.telegram_mut().push_inbound(edit);
+        service.poll_telegram_once().await.expect("edit intake");
+        service.dispatch_pending().await.expect("edit dispatch");
+    }
+    assert_eq!(service.concord().edits()[0].2, "✈️ @alice\nedited");
+    assert_eq!(service.concord().edits()[1].2, "edited");
+}
+
+#[tokio::test]
+async fn telegram_failed_first_message_keeps_header_on_retry_and_followup() {
+    let data = tempfile::tempdir().expect("directory");
+    let clock = AdjustableClock::new(10_000_000);
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("store"),
+        telegram_fake(),
+        concord_fake(),
+        clock.clone(),
+        recovery_settings(10, 100, Duration::from_secs(60), retry_policy(0)),
+    );
+    service.initialize().await.expect("initialize");
+    for id in [1, 2] {
+        service.telegram_mut().push_inbound(telegram_message(
+            id,
+            id + 1,
+            Some(41),
+            Some("alice"),
+            None,
+            "hello",
+        ));
+    }
+    service.poll_telegram_once().await.expect("intake");
+    service.concord_mut().push_send_result(Err(
+        armada_telegram_bridge::concord::ConcordError::Sdk { operation: "send" },
+    ));
+    assert_eq!(
+        service
+            .dispatch_ready()
+            .await
+            .expect("retry scheduled")
+            .retried,
+        1
+    );
+    assert_eq!(service.concord().sent(), []);
+    clock.advance(Duration::from_secs(1));
+    assert_eq!(
+        service
+            .dispatch_ready()
+            .await
+            .expect("retry delivered")
+            .delivered,
+        2
+    );
+    assert_eq!(service.concord().sent()[0].1, "✈️ @alice\nhello");
+    assert_eq!(service.concord().sent()[1].1, "hello");
+}

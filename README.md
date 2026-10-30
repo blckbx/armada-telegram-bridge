@@ -17,6 +17,8 @@ discovers destinations automatically.
 ## Features
 
 - Bidirectional text messages with Armada display names and Telegram usernames.
+- Consecutive Telegram messages from the same sender on a route show their
+  attribution only on the first message in Armada, including across restarts.
 - Exact routing between configured Armada community/channel IDs and Telegram
   group or forum-topic IDs.
 - Community-visible and separately private Armada channels, provided the bridge

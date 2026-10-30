@@ -78,6 +78,8 @@ struct TelegramDeliveryPayload {
 #[derive(Deserialize, Serialize)]
 struct ArmadaDeliveryPayload {
     text: String,
+    #[serde(default)]
+    attribution_header: Option<String>,
     attachments: Vec<AttachmentRef>,
     #[serde(default)]
     operation: DeliveryOperation,
@@ -679,7 +681,8 @@ where
                     self.dispatch_to_telegram(route_id, payload).await
                 }
                 DeliveryDirection::TelegramToArmada => {
-                    let payload = decode_armada_payload(&job.payload)?;
+                    let mut payload = decode_armada_payload(&job.payload)?;
+                    self.group_armada_payload(route_id, job.id, &mut payload)?;
                     self.dispatch_to_armada(route_id, payload).await
                 }
             };
@@ -868,6 +871,54 @@ where
             creates_link: false,
             expires_at_ms: None,
         })
+    }
+
+    fn group_armada_payload(
+        &self,
+        route_id: &RouteId,
+        job_id: JobId,
+        payload: &mut ArmadaDeliveryPayload,
+    ) -> Result<(), ServiceError> {
+        let grouping_job = match payload.operation {
+            DeliveryOperation::Create => Some(job_id),
+            DeliveryOperation::Edit => {
+                let original = payload
+                    .target_destination_ids
+                    .first()
+                    .map(|target| {
+                        self.store.message_link_by_destination(
+                            route_id,
+                            DeliveryDirection::TelegramToArmada,
+                            target,
+                        )
+                    })
+                    .transpose()?
+                    .flatten();
+                if let Some(link) = original {
+                    let original_payload = self
+                        .store
+                        .job(link.job_id)?
+                        .and_then(|job| job.payload)
+                        .map(|bytes| decode_armada_payload(&bytes))
+                        .transpose()?;
+                    // Legacy messages always displayed attribution.
+                    original_payload
+                        .filter(|original| original.attribution_header.is_some())
+                        .map(|_| link.job_id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(grouping_job) = grouping_job
+            && self.store.follows_same_author(grouping_job)?
+            && let Some(header) = &payload.attribution_header
+            && let Some(body) = payload.text.strip_prefix(&format!("{header}\n"))
+        {
+            payload.text = body.to_owned();
+        }
+        Ok(())
     }
 
     async fn dispatch_to_armada(
@@ -1793,6 +1844,7 @@ fn accept_reaction_update(
             reaction: Some(reaction),
         }),
         DeliveryDirection::TelegramToArmada => encode_armada_payload(&ArmadaDeliveryPayload {
+            attribution_header: None,
             text: String::new(),
             attachments: Vec::new(),
             operation: DeliveryOperation::ReactionSummary,
@@ -2111,6 +2163,7 @@ fn render_delivery_payload(
             })
             .ok(),
             Source::Telegram => encode_armada_payload(&ArmadaDeliveryPayload {
+                attribution_header: None,
                 text: String::new(),
                 attachments: Vec::new(),
                 operation,
@@ -2183,6 +2236,7 @@ fn render_delivery_payload(
                 body = prepend_plain(&prefix, &body);
             }
             encode_armada_payload(&ArmadaDeliveryPayload {
+                attribution_header: attribution_header(event),
                 text: format!("{header}\n{}", render_armada_markdown(&body)),
                 attachments: event.attachments.clone(),
                 operation,
@@ -2276,6 +2330,7 @@ fn decode_armada_payload(payload: &[u8]) -> Result<ArmadaDeliveryPayload, Servic
     }
     let text = std::str::from_utf8(payload).map_err(|_| ServiceError::InvalidPayload)?;
     Ok(ArmadaDeliveryPayload {
+        attribution_header: None,
         text: text.to_owned(),
         attachments: Vec::new(),
         operation: DeliveryOperation::Create,
