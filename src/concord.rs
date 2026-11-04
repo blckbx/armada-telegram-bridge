@@ -336,10 +336,11 @@ impl ConcordAdapter {
     }
 
     async fn load_profile(&self, npub: &str) -> Option<vector_sdk::SlimProfile> {
-        match self.bot.cached_profile(npub).await {
-            Some(profile) => Some(profile),
-            None => self.bot.fetch_profile(npub).await,
-        }
+        resolve_profile(
+            self.bot.cached_profile(npub).await,
+            self.bot.fetch_profile(npub),
+        )
+        .await
     }
 
     async fn display_name(&self, npub: &str) -> Option<String> {
@@ -347,10 +348,7 @@ impl ConcordAdapter {
     }
 
     async fn reaction_display_name(&self, npub: &str) -> Option<String> {
-        if let Some(profile) = self.bot.cached_profile(npub).await {
-            return profile_display_name(profile);
-        }
-        tokio::time::timeout(REACTION_PROFILE_TIMEOUT, self.bot.fetch_profile(npub))
+        tokio::time::timeout(REACTION_PROFILE_TIMEOUT, self.load_profile(npub))
             .await
             .ok()
             .flatten()
@@ -654,6 +652,23 @@ fn supported_reaction_slots(message: &Message, own_npub: &str) -> Vec<(String, S
         .into_iter()
         .take(256)
         .collect()
+}
+
+async fn resolve_profile(
+    cached: Option<vector_sdk::SlimProfile>,
+    fetch: impl std::future::Future<Output = Option<vector_sdk::SlimProfile>>,
+) -> Option<vector_sdk::SlimProfile> {
+    // The SDK creates placeholder profiles while learning channel authors.
+    // Their presence alone does not mean presentation metadata was fetched.
+    if let Some(profile) = cached {
+        if [&profile.display_name, &profile.name, &profile.nickname]
+            .into_iter()
+            .any(|name| !name.trim().is_empty())
+        {
+            return Some(profile);
+        }
+    }
+    fetch.await
 }
 
 fn profile_display_name(profile: vector_sdk::SlimProfile) -> Option<String> {
@@ -1415,6 +1430,46 @@ mod tests {
     const COMMUNITY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const CHANNEL: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const INNER_ID: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    #[tokio::test]
+    async fn placeholder_profile_fetches_author_name_instead_of_using_empty_cache() {
+        let placeholder = vector_sdk::SlimProfile {
+            display_name: " ".into(),
+            name: "\t".into(),
+            ..Default::default()
+        };
+        let resolved = resolve_profile(Some(placeholder), async {
+            Some(vector_sdk::SlimProfile {
+                display_name: "Bear".into(),
+                ..Default::default()
+            })
+        })
+        .await;
+        assert_eq!(
+            resolved.and_then(profile_display_name).as_deref(),
+            Some("Bear")
+        );
+    }
+
+    #[tokio::test]
+    async fn named_cached_profile_does_not_fetch_from_relays() {
+        for field in 0..3 {
+            let mut cached = vector_sdk::SlimProfile::default();
+            match field {
+                0 => cached.display_name = "Bear".into(),
+                1 => cached.name = "Bear".into(),
+                _ => cached.nickname = "Bear".into(),
+            }
+            let resolved = resolve_profile(Some(cached), async {
+                panic!("usable cached names must not trigger a relay lookup")
+            })
+            .await;
+            assert_eq!(
+                resolved.and_then(profile_display_name).as_deref(),
+                Some("Bear")
+            );
+        }
+    }
 
     #[test]
     fn sdk_logging_is_forced_off_before_private_transport_use() {
