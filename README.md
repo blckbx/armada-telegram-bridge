@@ -17,7 +17,7 @@ discovers destinations automatically.
 ## Features
 
 - Bidirectional text messages with Armada display names and Telegram handles
-  followed by display names in parentheses, such as `✈️ @steff2021 (Steffen)`.
+  followed by display names in parentheses.
 - Consecutive Telegram messages from the same sender on a route show their
   attribution only on the first message in Armada, including across restarts.
 - Exact routing between configured Armada community/channel IDs and Telegram
