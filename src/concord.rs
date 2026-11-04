@@ -660,13 +660,12 @@ async fn resolve_profile(
 ) -> Option<vector_sdk::SlimProfile> {
     // The SDK creates placeholder profiles while learning channel authors.
     // Their presence alone does not mean presentation metadata was fetched.
-    if let Some(profile) = cached {
-        if [&profile.display_name, &profile.name, &profile.nickname]
+    if let Some(profile) = cached
+        && [&profile.display_name, &profile.name, &profile.nickname]
             .into_iter()
             .any(|name| !name.trim().is_empty())
-        {
-            return Some(profile);
-        }
+    {
+        return Some(profile);
     }
     fetch.await
 }
