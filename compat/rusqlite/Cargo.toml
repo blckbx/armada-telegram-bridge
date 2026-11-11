@@ -1,0 +1,19 @@
+[package]
+name = "rusqlite"
+version = "0.38.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Bridge compatibility wrapper forwarding vector-core to patched rusqlite"
+
+[dependencies]
+rusqlite-patched = { package = "rusqlite", version = "=0.41.1", default-features = false }
+
+[features]
+default = ["cache"]
+cache = ["rusqlite-patched/cache"]
+bundled = ["rusqlite-patched/bundled"]
+fallible_uint = ["rusqlite-patched/fallible_uint"]
+
+[lib]
+path = "lib.rs"

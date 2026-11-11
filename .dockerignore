@@ -7,3 +7,5 @@
 !LICENSE
 !scripts/
 !scripts/release_artifacts.py
+!compat/
+!compat/**

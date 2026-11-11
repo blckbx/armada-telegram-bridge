@@ -4,12 +4,13 @@
 | --- | --- |
 | Bridge | Cargo version 0.1.0; uncommitted candidate, not released |
 | `vector_sdk` | Exactly 0.11.0 in Cargo.lock; published SDK revision `b4c5b6eff89a6efbfeef726aae4e176451b8e6d6` recorded in ADR 0001 |
-| `vector-core` | 0.10.0 in Cargo.lock |
+| `vector-core` | 0.10.0 in Cargo.lock; its rusqlite 0.38 dependency is forwarded to 0.41.1 by the [local compatibility wrapper](../compat/rusqlite/README.md) |
 | `nostr-sdk` | 0.45.1 in Cargo.lock |
 | Armada | Researched revision `eb69625977b887f988ce6bab2bd70d2688d88feb`; actual deployed client build must be recorded during acceptance |
 | Concord specification | Researched revision `f84d55523593688c70c1b1a1b765992103157f1b`; SDK behavior, not the document alone, governs compatibility |
 | Telegram transport | Direct Bot API JSON/HTTP using reqwest 0.12.28; **teloxide is not used** |
 | Telegram Bot API | Official documentation retrieved 2026-10-23 lists 10.3 (2026-08-24). The hosted endpoint is unversioned; this is not a negotiated or fully tested API version |
+| SQLite dependencies | rusqlite 0.41.1 / libsqlite3-sys 0.39.1 (bundled SQLite 3.54.1); one native SQLite implementation for the bridge and SDK |
 | Database | Schema 5; new/empty database migration tested; future schema rejected; restore backup rather than downgrade in place |
 | Rust requirement | Candidate requires tested rustc 1.99.0; fuzz toolchain 1.101.0-nightly (2026-10-06). The previous 1.85 declaration was removed: an explicit 1.89 build fails in vector-core on `floor_char_boundary`. This is a tested baseline, not a claim to have found the oldest compatible compiler |
 | Deployment | Unix locks/signals tested locally; rootless read-only image and systemd target-host verification pending |

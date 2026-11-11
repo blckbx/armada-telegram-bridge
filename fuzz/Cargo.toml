@@ -20,3 +20,7 @@ path = "fuzz_targets/rich_text.rs"
 test = false
 doc = false
 bench = false
+
+# Patches are resolved at the workspace root; the fuzz workspace needs this too.
+[patch.crates-io]
+rusqlite = { path = "../compat/rusqlite" }

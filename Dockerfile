@@ -7,6 +7,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY LICENSE ./
 COPY scripts/release_artifacts.py ./scripts/release_artifacts.py
 COPY src ./src
+COPY compat ./compat
 RUN cargo fetch --locked && cargo build --locked --release \
     && python3 scripts/release_artifacts.py
 

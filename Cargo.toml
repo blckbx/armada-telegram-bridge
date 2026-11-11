@@ -11,8 +11,8 @@ publish = false
 async-trait = "=0.1.92"
 chacha20poly1305 = { version = "=0.10.1", features = ["std"] }
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
-rusqlite = { version = "=0.38.0", features = ["bundled"] }
-rustix = { version = "=1.1.5", features = ["fs"] }
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
+rustix = { version = "=1.1.6", features = ["fs"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"
@@ -40,3 +40,8 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+# vector-core 0.10 still requires rusqlite 0.38. Route that API through the
+# patched upstream implementation until the SDK upgrades its requirement.
+[patch.crates-io]
+rusqlite = { path = "compat/rusqlite" }
