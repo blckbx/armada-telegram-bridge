@@ -217,6 +217,11 @@ Formatting uses a conservative common subset. Unsupported styles remain
 readable as unformatted text. Plain Telegram URLs remain plain URLs in Armada;
 explicitly labelled links remain labelled links.
 
+Forwarded Telegram messages include a “Forwarded from” line with the original
+user, group, or channel name supplied by Telegram. Consecutive messages from the
+same Telegram sender omit the repeated sender header; a message from Armada
+breaks that sequence, so the next Telegram message shows its sender again.
+
 ## Reactions and mutations
 
 Reactions are represented by a bridge-owned summary reply rather than native

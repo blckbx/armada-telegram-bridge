@@ -2111,7 +2111,22 @@ fn render_reaction_summary(
 #[must_use]
 pub fn render_attributed(event: &BridgeEvent) -> Option<String> {
     let header = attribution_header(event)?;
-    Some(format!("{header}\n{}", event.body))
+    let forward = forwarded_source(event)
+        .map(|origin| format!("Forwarded from {}\n", escape_armada_header(&origin)))
+        .unwrap_or_default();
+    Some(format!("{header}\n{forward}{}", event.body))
+}
+
+fn forwarded_source(event: &BridgeEvent) -> Option<String> {
+    match &event.sender {
+        SenderIdentity::Telegram {
+            forwarded_from: Some(origin),
+            ..
+        } if event.source == Source::Telegram => {
+            Some(clean_header(Some(origin)).unwrap_or_else(|| "Unknown source".into()))
+        }
+        _ => None,
+    }
 }
 
 fn attribution_header(event: &BridgeEvent) -> Option<String> {
@@ -2126,6 +2141,7 @@ fn attribution_header(event: &BridgeEvent) -> Option<String> {
             sender_chat_id,
             username,
             display_name,
+            ..
         } if event.source == Source::Telegram => {
             // A stable Telegram identity is required for attribution and
             // deduplication, but its numeric ID is an internal detail and is
@@ -2245,6 +2261,9 @@ fn render_delivery_payload(
                 .clone()
                 .filter(|rich| rich.text == event.body)
                 .unwrap_or_else(|| RichText::plain(event.body.clone()));
+            if let Some(origin) = forwarded_source(event) {
+                body = prepend_plain(&format!("Forwarded from {origin}\n"), &body);
+            }
             if let Some(prefix) = reply_prefix {
                 body = prepend_plain(&prefix, &body);
             }

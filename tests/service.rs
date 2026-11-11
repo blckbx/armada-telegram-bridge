@@ -332,6 +332,7 @@ fn telegram_message(
             sender: SenderIdentity::Telegram {
                 user_id,
                 sender_chat_id: None,
+                forwarded_from: None,
                 username: username.map(str::to_owned),
                 display_name: display_name.map(str::to_owned),
             },
@@ -375,6 +376,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
         message.event.sender = SenderIdentity::Telegram {
             user_id: Some(77),
             sender_chat_id: None,
+            forwarded_from: None,
             username: username.map(str::to_owned),
             display_name: display_name.map(str::to_owned),
         };
@@ -384,6 +386,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
     message.event.sender = SenderIdentity::Telegram {
         user_id: Some(77),
         sender_chat_id: None,
+        forwarded_from: None,
         username: None,
         display_name: Some("[Admin](https://invalid)\n\u{202e}forged".to_owned()),
     };
@@ -1957,6 +1960,155 @@ async fn telegram_followups_group_by_stable_sender_across_restart_and_edits() {
     }
     assert_eq!(service.concord().edits()[0].2, "✈️ @alice\nedited");
     assert_eq!(service.concord().edits()[1].2, "edited");
+}
+
+#[tokio::test]
+async fn armada_reply_breaks_telegram_sender_grouping_across_restart() {
+    let data = tempfile::tempdir().expect("directory");
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("store"),
+        telegram_fake(),
+        concord_fake(),
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("initialize");
+    service.telegram_mut().push_inbound(telegram_message(
+        1,
+        2,
+        Some(41),
+        Some("alice"),
+        None,
+        "hello",
+    ));
+    service.poll_telegram_once().await.expect("first intake");
+    service.dispatch_pending().await.expect("first delivery");
+    assert_eq!(service.concord().sent()[0].1, "✈️ @alice\nhello");
+    service
+        .accept_armada(armada_message(
+            "reply",
+            "reply-cursor",
+            ALICE_NPUB,
+            Some("Bob"),
+            "hi",
+        ))
+        .expect("Armada reply intake");
+    // The native Armada reply is already visible, even before delivery to Telegram.
+    // Grouping must remember that reply after a restart.
+    let concord = std::mem::replace(service.concord_mut(), concord_fake());
+    drop(service);
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("reopen"),
+        telegram_fake(),
+        concord,
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("restart");
+    for (id, body) in [(2, "how are you?"), (3, "still here")] {
+        service.telegram_mut().push_inbound(telegram_message(
+            id,
+            id + 1,
+            Some(41),
+            Some("alice"),
+            None,
+            body,
+        ));
+    }
+    service.poll_telegram_once().await.expect("followup intake");
+    service.dispatch_pending().await.expect("followup delivery");
+    let texts: Vec<_> = service
+        .concord()
+        .sent()
+        .iter()
+        .map(|sent| sent.1.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        ["✈️ @alice\nhello", "✈️ @alice\nhow are you?", "still here"]
+    );
+
+    let mut edit = telegram_message(10, 11, Some(41), Some("alice"), None, "how is it going?");
+    edit.event.source_event_id = format!("telegram:edit:{CHAT_ID}:2:10");
+    edit.event.mutation = Mutation::Edit;
+    edit.event.mutation_target = Some(SourceMessageRef {
+        source: Source::Telegram,
+        source_event_id: format!("telegram:{CHAT_ID}:2"),
+    });
+    service.telegram_mut().push_inbound(edit);
+    service.poll_telegram_once().await.expect("edit intake");
+    service.dispatch_pending().await.expect("edit dispatch");
+    assert_eq!(
+        service.concord().edits()[0].2,
+        "✈️ @alice\nhow is it going?"
+    );
+}
+
+#[tokio::test]
+async fn telegram_forwards_keep_original_sources_across_grouping_restart_and_edits() {
+    let data = tempfile::tempdir().expect("directory");
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("store"),
+        telegram_fake(),
+        concord_fake(),
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("initialize");
+    for (id, origin) in [
+        (1, None),
+        (2, Some("Original Author")),
+        (3, Some("News channel")),
+    ] {
+        let mut message = telegram_message(id, id + 1, Some(41), Some("alice"), None, "body");
+        if let SenderIdentity::Telegram { forwarded_from, .. } = &mut message.event.sender {
+            *forwarded_from = origin.map(str::to_owned);
+        }
+        service.telegram_mut().push_inbound(message);
+    }
+    service.poll_telegram_once().await.expect("intake");
+    // Persist queued forward metadata through a restart before dispatch.
+    drop(service);
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("reopen"),
+        telegram_fake(),
+        concord_fake(),
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("restart");
+    service.dispatch_pending().await.expect("dispatch");
+    let texts: Vec<_> = service
+        .concord()
+        .sent()
+        .iter()
+        .map(|sent| sent.1.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "✈️ @alice\nbody",
+            "Forwarded from Original Author\nbody",
+            "Forwarded from News channel\nbody",
+        ]
+    );
+    let mut edit = telegram_message(10, 11, Some(41), Some("alice"), None, "edited");
+    if let SenderIdentity::Telegram { forwarded_from, .. } = &mut edit.event.sender {
+        *forwarded_from = Some("[Author]\n\u{202e}forged".to_owned());
+    }
+    edit.event.source_event_id = format!("telegram:edit:{CHAT_ID}:2:10");
+    edit.event.mutation = Mutation::Edit;
+    edit.event.mutation_target = Some(SourceMessageRef {
+        source: Source::Telegram,
+        source_event_id: format!("telegram:{CHAT_ID}:2"),
+    });
+    service.telegram_mut().push_inbound(edit);
+    service.poll_telegram_once().await.expect("edit intake");
+    service.dispatch_pending().await.expect("edit dispatch");
+    assert_eq!(
+        service.concord().edits()[0].2,
+        "Forwarded from \\[Author\\] forged\nedited"
+    );
 }
 
 #[tokio::test]

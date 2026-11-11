@@ -553,6 +553,7 @@ impl TelegramAdapter {
         let Some(sender) = sender_identity(
             message.from,
             message.sender_chat,
+            message.forward_origin.map(RawMessageOrigin::source_label),
             self.expected_bot_id,
             self.relay_other_bots,
         ) else {
@@ -1434,6 +1435,7 @@ fn album_positions(updates: &[RawUpdate]) -> HashMap<u64, (u16, u16)> {
 fn sender_identity(
     from: Option<RawUser>,
     sender_chat: Option<RawSenderChat>,
+    forwarded_from: Option<String>,
     own_bot_id: u64,
     relay_other_bots: bool,
 ) -> Option<SenderIdentity> {
@@ -1441,6 +1443,7 @@ fn sender_identity(
         return Some(SenderIdentity::Telegram {
             user_id: None,
             sender_chat_id: Some(sender_chat.id),
+            forwarded_from,
             username: sender_chat.username,
             display_name: sender_chat.title,
         });
@@ -1459,6 +1462,7 @@ fn sender_identity(
     Some(SenderIdentity::Telegram {
         user_id: Some(from.id),
         sender_chat_id: None,
+        forwarded_from,
         username: from.username,
         display_name,
     })
@@ -1656,6 +1660,7 @@ struct RawMessage {
     message_thread_id: Option<u64>,
     from: Option<RawUser>,
     sender_chat: Option<RawSenderChat>,
+    forward_origin: Option<RawMessageOrigin>,
     text: Option<String>,
     entities: Option<Vec<RawMessageEntity>>,
     caption: Option<String>,
@@ -1671,6 +1676,54 @@ struct RawMessage {
     reply_to_message: Option<Box<RawMessage>>,
     migrate_to_chat_id: Option<i64>,
     migrate_from_chat_id: Option<i64>,
+}
+
+/// Forward origins are presentation only: the forwarding user remains the sender.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RawMessageOrigin {
+    User {
+        sender_user: RawUser,
+    },
+    HiddenUser {
+        sender_user_name: String,
+    },
+    Chat {
+        sender_chat: RawSenderChat,
+    },
+    Channel {
+        chat: RawSenderChat,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+impl RawMessageOrigin {
+    fn source_label(self) -> String {
+        let (username, display_name) = match self {
+            Self::User { sender_user: user } => {
+                let name = match user.last_name {
+                    Some(last) if !last.is_empty() => format!("{} {last}", user.first_name),
+                    _ => user.first_name,
+                };
+                (user.username, Some(name))
+            }
+            Self::HiddenUser { sender_user_name } => (None, Some(sender_user_name)),
+            Self::Chat { sender_chat: chat } | Self::Channel { chat } => {
+                (chat.username, chat.title)
+            }
+            Self::Unknown => (None, None),
+        };
+        match (
+            username.filter(|s| !s.trim().is_empty()),
+            display_name.filter(|s| !s.trim().is_empty()),
+        ) {
+            (Some(handle), Some(name)) => format!("@{} ({name})", handle.trim_start_matches('@')),
+            (Some(handle), None) => format!("@{}", handle.trim_start_matches('@')),
+            (None, Some(name)) => name,
+            (None, None) => "Unknown source".to_owned(),
+        }
+    }
 }
 
 #[derive(Deserialize)]

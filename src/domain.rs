@@ -245,6 +245,8 @@ pub enum SenderIdentity {
         user_id: Option<u64>,
         /// Stable numeric sender-chat ID for anonymous/channel posts.
         sender_chat_id: Option<i64>,
+        /// Untrusted original-source label for a forwarded message; never an identity.
+        forwarded_from: Option<String>,
         /// Untrusted mutable username.
         username: Option<String>,
         /// Untrusted mutable display name.

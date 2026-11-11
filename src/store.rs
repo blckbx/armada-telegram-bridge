@@ -1170,8 +1170,10 @@ impl Store {
         Ok(())
     }
 
-    /// Whether the preceding delivered message on this route and direction has
-    /// the same stable author as this job. Failed and skipped jobs do not count.
+    /// Whether the preceding visible message on this route has the same author.
+    /// Same-direction jobs count after delivery. Opposite-direction messages
+    /// break grouping on intake because they are already visible at the source,
+    /// even if their destination delivery is still pending or fails.
     ///
     /// # Errors
     /// Returns a database error if the query cannot complete.
@@ -1182,10 +1184,15 @@ impl Store {
                 JOIN inbox_events i ON i.id = o.inbox_event_id
                 WHERE o.id = ?1 AND i.source_author_id != ''
                   AND i.source_author_id = (
-                      SELECT m.source_author_id FROM message_links m
-                      WHERE m.route_id = o.route_id AND m.direction = o.direction
-                        AND m.job_id < o.id
-                      ORDER BY m.job_id DESC LIMIT 1
+                      SELECT previous_event.source_author_id
+                      FROM outbox_jobs previous_job
+                      JOIN inbox_events previous_event ON previous_event.id = previous_job.inbox_event_id
+                      WHERE previous_job.route_id = o.route_id AND previous_job.id < o.id
+                        AND (
+                            previous_job.direction != o.direction
+                            OR EXISTS (SELECT 1 FROM message_links m WHERE m.job_id = previous_job.id)
+                        )
+                      ORDER BY previous_job.id DESC LIMIT 1
                   )
             )",
             [job_id.get()],

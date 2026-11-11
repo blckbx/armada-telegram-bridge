@@ -723,3 +723,88 @@ fn sender_grouping_is_route_scoped_and_ignores_skipped_deliveries() {
             .expect("grouping survives cleanup")
     );
 }
+
+#[test]
+fn native_armada_messages_break_grouping_before_telegram_delivery() {
+    let data = tempfile::tempdir().expect("directory");
+    let mut store = Store::open(data.path()).expect("store");
+    let alpha = route("alpha");
+    let beta = route("beta");
+    store.register_route(&alpha).expect("alpha");
+    store.register_route(&beta).expect("beta");
+    for (id, route_id, direction, author, delivered, expected) in [
+        (
+            1,
+            &alpha,
+            DeliveryDirection::TelegramToArmada,
+            "alice",
+            true,
+            false,
+        ),
+        (
+            2,
+            &beta,
+            DeliveryDirection::ArmadaToTelegram,
+            "bob",
+            false,
+            false,
+        ),
+        (
+            3,
+            &alpha,
+            DeliveryDirection::TelegramToArmada,
+            "alice",
+            true,
+            true,
+        ),
+        (
+            4,
+            &alpha,
+            DeliveryDirection::ArmadaToTelegram,
+            "bob",
+            false,
+            false,
+        ),
+        (
+            5,
+            &alpha,
+            DeliveryDirection::TelegramToArmada,
+            "alice",
+            true,
+            false,
+        ),
+        (
+            6,
+            &alpha,
+            DeliveryDirection::TelegramToArmada,
+            "alice",
+            true,
+            true,
+        ),
+    ] {
+        let AcceptOutcome::Enqueued(job) = store
+            .accept_inbound(
+                &delivery(
+                    route_id,
+                    direction,
+                    &format!("source:{id}"),
+                    "body",
+                    &id.to_string(),
+                    id,
+                )
+                .with_source_author(author),
+            )
+            .expect("intake")
+        else {
+            panic!("new job expected")
+        };
+        if direction == DeliveryDirection::TelegramToArmada {
+            assert_eq!(store.follows_same_author(job).expect("grouping"), expected);
+        }
+        if delivered {
+            store
+                .mark_delivered(job, &format!("destination:{id}"), id)
+                .expect("delivery");
+        }
+    }
+}

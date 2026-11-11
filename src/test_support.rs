@@ -92,7 +92,7 @@ pub struct FakeTelegramPort {
 
 #[derive(Clone)]
 enum FakeTelegramInbound {
-    Message(InboundTelegramMessage),
+    Message(Box<InboundTelegramMessage>),
     Reaction(BridgeReactionUpdate, u64),
 }
 
@@ -122,7 +122,7 @@ impl FakeTelegramPort {
     /// Appends one normalized update to the next poll.
     pub fn push_inbound(&mut self, message: InboundTelegramMessage) {
         self.inbound
-            .push_back(FakeTelegramInbound::Message(message));
+            .push_back(FakeTelegramInbound::Message(Box::new(message)));
     }
 
     /// Appends one normalized reaction update to the next poll.
@@ -238,7 +238,9 @@ impl TelegramPort for FakeTelegramPort {
                 continue;
             }
             let accepted_result = match &item {
-                FakeTelegramInbound::Message(message) => sink.accept(message.clone()).await,
+                FakeTelegramInbound::Message(message) => {
+                    sink.accept(message.as_ref().clone()).await
+                }
                 FakeTelegramInbound::Reaction(update, next_offset) => {
                     sink.accept_reaction(update.clone(), *next_offset).await
                 }

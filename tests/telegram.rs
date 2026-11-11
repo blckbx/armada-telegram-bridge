@@ -395,6 +395,7 @@ async fn polling_filters_exact_scope_and_preserves_stable_sender_identities() {
         SenderIdentity::Telegram {
             user_id: None,
             sender_chat_id: Some(-100_999),
+            forwarded_from: None,
             ..
         }
     ));
@@ -409,6 +410,84 @@ async fn polling_filters_exact_scope_and_preserves_stable_sender_identities() {
         sink.accepted[0].event.source_event_id,
         format!("telegram:{CHAT_ID}:105")
     );
+}
+
+#[tokio::test]
+async fn forwarded_origins_preserve_the_forwarder_and_body_formatting() {
+    let origins = [
+        (
+            json!({"type":"user", "date":1, "sender_user":{
+                "id":99, "is_bot":true, "first_name":"Original", "last_name":"Author", "username":"original"
+            }}),
+            "@original (Original Author)",
+        ),
+        (
+            json!({"type":"hidden_user", "date":1, "sender_user_name":"Private Author"}),
+            "Private Author",
+        ),
+        (
+            json!({"type":"chat", "date":1, "sender_chat":sender_chat(-100_999, "Original group")}),
+            "Original group",
+        ),
+        (
+            json!({"type":"channel", "date":1, "chat":{
+            "id":-100_999, "type":"channel", "title":"News", "username":"news"
+        }, "message_id":5, "author_signature":"Editor"}),
+            "@news (News)",
+        ),
+        (json!({"type":"future_origin", "date":1}), "Unknown source"),
+    ];
+    let updates: Vec<_> = origins
+        .iter()
+        .enumerate()
+        .map(|(i, (origin, _))| {
+            let mut raw = update(
+                u64::try_from(i).unwrap() + 1,
+                CHAT_ID,
+                None,
+                user(13, false, "alice"),
+                None,
+                "A😀 body",
+            );
+            raw["message"]["forward_origin"] = origin.clone();
+            raw["message"]["entities"] = json!([{"type":"bold", "offset":1, "length":2}]);
+            // Media forwards use captions rather than text.
+            if i == 3 {
+                let message = raw["message"].as_object_mut().unwrap();
+                let text = message.remove("text").unwrap();
+                let entities = message.remove("entities").unwrap();
+                message.insert("caption".into(), text);
+                message.insert("caption_entities".into(), entities);
+                message.insert(
+                    "photo".into(),
+                    json!([{"file_id":"photo", "file_unique_id":"unique", "file_size":10}]),
+                );
+            }
+            raw
+        })
+        .collect();
+    let server = ScriptedServer::start(vec![Response::json(json!({"ok":true,"result":updates}))]);
+    let mut adapter = adapter(&server, vec![route(None)]);
+    let mut sink = RecordingSink::default();
+    let report = adapter
+        .poll_once(&mut sink)
+        .await
+        .expect("forwarded updates");
+    assert_eq!(report.accepted, origins.len());
+    for (message, (_, expected)) in sink.accepted.iter().zip(&origins) {
+        assert!(matches!(
+            &message.event.sender,
+            SenderIdentity::Telegram { user_id:Some(13), forwarded_from:Some(origin), .. }
+                if origin == expected
+        ));
+        assert_eq!(message.event.body, "A😀 body");
+        let rich = message.event.rich_text.as_ref().unwrap();
+        assert_eq!(&rich.text[rich.spans[0].start..rich.spans[0].end], "😀");
+        let rendered = armada_telegram_bridge::service::render_attributed(&message.event).unwrap();
+        assert!(rendered.starts_with("✈️ @alice "));
+        assert!(rendered.contains("\nForwarded from "));
+    }
+    assert_eq!(sink.accepted[3].event.attachments.len(), 1);
 }
 
 #[tokio::test]
@@ -934,6 +1013,7 @@ async fn reusable_port_contract_passes_for_fake_and_http_adapter() {
             sender: SenderIdentity::Telegram {
                 user_id: Some(13),
                 sender_chat_id: None,
+                forwarded_from: None,
                 username: Some("alice".to_owned()),
                 display_name: Some("alice".to_owned()),
             },
