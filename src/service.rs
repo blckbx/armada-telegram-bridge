@@ -2059,9 +2059,9 @@ fn render_reaction_summary(
 #[must_use]
 pub fn render_attributed(event: &BridgeEvent) -> Option<String> {
     let header = attribution_header(event)?;
-    let forward = forwarded_source(event)
-        .map(|origin| format!("Forwarded from {}\n", escape_armada_header(&origin)))
-        .unwrap_or_default();
+    let forward = forwarded_source(event).map_or_else(String::new, |origin| {
+        format!("Forwarded from {}\n", escape_armada_header(&origin))
+    });
     Some(format!("{header}\n{forward}{}", event.body))
 }
 
