@@ -1726,6 +1726,27 @@ async fn telegram_reaction_updates_are_durable_and_summarized_in_armada() {
         .await
         .expect("combined summary dispatched");
     assert_eq!(service.concord().edits()[0].2, "Reactions: ❤️ 3 anonymous");
+
+    service.telegram_mut().push_inbound(telegram_message(
+        73,
+        74,
+        Some(41),
+        Some("alice"),
+        None,
+        "after reactions",
+    ));
+    service
+        .poll_telegram_once()
+        .await
+        .expect("followup accepted");
+    service
+        .dispatch_pending()
+        .await
+        .expect("followup dispatched");
+    assert_eq!(
+        service.concord().sent().last().expect("followup").1,
+        "✈️ @alice\nafter reactions"
+    );
 }
 
 #[tokio::test]
@@ -1881,7 +1902,7 @@ async fn expiring_armada_mirror_is_deleted_after_restart() {
 }
 
 #[tokio::test]
-async fn telegram_followups_group_by_stable_sender_across_restart_and_edits() {
+async fn telegram_followups_keep_sender_headers_across_restart_and_edits() {
     let data = tempfile::tempdir().expect("directory");
     let mut service = BridgeService::new(
         Store::open(data.path()).expect("store"),
@@ -1918,7 +1939,7 @@ async fn telegram_followups_group_by_stable_sender_across_restart_and_edits() {
         texts,
         [
             "✈️ @alice\nfirst",
-            "\\*\\*second\\*\\*",
+            "✈️ @renamed\n\\*\\*second\\*\\*",
             "✈️ @renamed\ndifferent sender",
             "✈️ @alice\nback again"
         ]
@@ -1944,7 +1965,7 @@ async fn telegram_followups_group_by_stable_sender_across_restart_and_edits() {
     ));
     service.poll_telegram_once().await.expect("intake");
     service.dispatch_pending().await.expect("dispatch");
-    assert_eq!(service.concord().sent()[4].1, "after restart");
+    assert_eq!(service.concord().sent()[4].1, "✈️ @alice\nafter restart");
 
     for id in [1, 2] {
         let mut edit = telegram_message(10 + id, 11 + id, Some(41), Some("alice"), None, "edited");
@@ -1959,11 +1980,11 @@ async fn telegram_followups_group_by_stable_sender_across_restart_and_edits() {
         service.dispatch_pending().await.expect("edit dispatch");
     }
     assert_eq!(service.concord().edits()[0].2, "✈️ @alice\nedited");
-    assert_eq!(service.concord().edits()[1].2, "edited");
+    assert_eq!(service.concord().edits()[1].2, "✈️ @alice\nedited");
 }
 
 #[tokio::test]
-async fn armada_reply_breaks_telegram_sender_grouping_across_restart() {
+async fn telegram_followups_keep_sender_headers_after_armada_reply_and_restart() {
     let data = tempfile::tempdir().expect("directory");
     let mut service = BridgeService::new(
         Store::open(data.path()).expect("store"),
@@ -1994,7 +2015,7 @@ async fn armada_reply_breaks_telegram_sender_grouping_across_restart() {
         ))
         .expect("Armada reply intake");
     // The native Armada reply is already visible, even before delivery to Telegram.
-    // Grouping must remember that reply after a restart.
+    // Followups must retain attribution after a restart.
     let concord = std::mem::replace(service.concord_mut(), concord_fake());
     drop(service);
     let mut service = BridgeService::new(
@@ -2025,7 +2046,11 @@ async fn armada_reply_breaks_telegram_sender_grouping_across_restart() {
         .collect();
     assert_eq!(
         texts,
-        ["✈️ @alice\nhello", "✈️ @alice\nhow are you?", "still here"]
+        [
+            "✈️ @alice\nhello",
+            "✈️ @alice\nhow are you?",
+            "✈️ @alice\nstill here"
+        ]
     );
 
     let mut edit = telegram_message(10, 11, Some(41), Some("alice"), None, "how is it going?");
@@ -2045,7 +2070,7 @@ async fn armada_reply_breaks_telegram_sender_grouping_across_restart() {
 }
 
 #[tokio::test]
-async fn telegram_forwards_keep_original_sources_across_grouping_restart_and_edits() {
+async fn telegram_forwards_keep_sender_and_original_sources_across_restart_and_edits() {
     let data = tempfile::tempdir().expect("directory");
     let mut service = BridgeService::new(
         Store::open(data.path()).expect("store"),
@@ -2088,8 +2113,8 @@ async fn telegram_forwards_keep_original_sources_across_grouping_restart_and_edi
         texts,
         [
             "✈️ @alice\nbody",
-            "Forwarded from Original Author\nbody",
-            "Forwarded from News channel\nbody",
+            "✈️ @alice\nForwarded from Original Author\nbody",
+            "✈️ @alice\nForwarded from News channel\nbody",
         ]
     );
     let mut edit = telegram_message(10, 11, Some(41), Some("alice"), None, "edited");
@@ -2107,7 +2132,7 @@ async fn telegram_forwards_keep_original_sources_across_grouping_restart_and_edi
     service.dispatch_pending().await.expect("edit dispatch");
     assert_eq!(
         service.concord().edits()[0].2,
-        "Forwarded from \\[Author\\] forged\nedited"
+        "✈️ @alice\nForwarded from \\[Author\\] forged\nedited"
     );
 }
 
@@ -2156,5 +2181,5 @@ async fn telegram_failed_first_message_keeps_header_on_retry_and_followup() {
         2
     );
     assert_eq!(service.concord().sent()[0].1, "✈️ @alice\nhello");
-    assert_eq!(service.concord().sent()[1].1, "hello");
+    assert_eq!(service.concord().sent()[1].1, "✈️ @alice\nhello");
 }

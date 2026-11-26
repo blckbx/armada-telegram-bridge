@@ -18,8 +18,8 @@ discovers destinations automatically.
 
 - Bidirectional text messages with Armada display names and Telegram handles
   followed by display names in parentheses.
-- Consecutive Telegram messages from the same sender on a route show their
-  attribution only on the first message in Armada, including across restarts.
+- Every Telegram message shows its sender attribution in Armada, including
+  follow-up messages and edits.
 - Exact routing between configured Armada community/channel IDs and Telegram
   group or forum-topic IDs.
 - Community-visible and separately private Armada channels, provided the bridge
@@ -218,9 +218,8 @@ readable as unformatted text. Plain Telegram URLs remain plain URLs in Armada;
 explicitly labelled links remain labelled links.
 
 Forwarded Telegram messages include a “Forwarded from” line with the original
-user, group, or channel name supplied by Telegram. Consecutive messages from the
-same Telegram sender omit the repeated sender header; a message from Armada
-breaks that sequence, so the next Telegram message shows its sender again.
+user, group, or channel name supplied by Telegram. Every relayed Telegram message
+includes its sender header, including consecutive messages from the same sender.
 
 ## Reactions and mutations
 

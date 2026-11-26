@@ -1170,36 +1170,6 @@ impl Store {
         Ok(())
     }
 
-    /// Whether the preceding visible message on this route has the same author.
-    /// Same-direction jobs count after delivery. Opposite-direction messages
-    /// break grouping on intake because they are already visible at the source,
-    /// even if their destination delivery is still pending or fails.
-    ///
-    /// # Errors
-    /// Returns a database error if the query cannot complete.
-    pub fn follows_same_author(&self, job_id: JobId) -> Result<bool, StoreError> {
-        Ok(self.connection.query_row(
-            "SELECT EXISTS (
-                SELECT 1 FROM outbox_jobs o
-                JOIN inbox_events i ON i.id = o.inbox_event_id
-                WHERE o.id = ?1 AND i.source_author_id != ''
-                  AND i.source_author_id = (
-                      SELECT previous_event.source_author_id
-                      FROM outbox_jobs previous_job
-                      JOIN inbox_events previous_event ON previous_event.id = previous_job.inbox_event_id
-                      WHERE previous_job.route_id = o.route_id AND previous_job.id < o.id
-                        AND (
-                            previous_job.direction != o.direction
-                            OR EXISTS (SELECT 1 FROM message_links m WHERE m.job_id = previous_job.id)
-                        )
-                      ORDER BY previous_job.id DESC LIMIT 1
-                  )
-            )",
-            [job_id.get()],
-            |row| row.get(0),
-        )?)
-    }
-
     /// Looks up the durable destination mapping for a source message.
     ///
     /// # Errors
