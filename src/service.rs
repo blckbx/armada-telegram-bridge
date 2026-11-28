@@ -22,8 +22,8 @@ use crate::domain::{
     ReactionEntry, RouteId, SenderIdentity, Source,
 };
 use crate::rich_text::{
-    RichText, TelegramMessage, parse_armada_markdown, prepend_plain, render_armada_markdown,
-    split_for_telegram, to_telegram,
+    RichSpan, RichStyle, RichText, TelegramMessage, parse_armada_markdown, prepend_plain,
+    render_armada_markdown, split_for_telegram, to_telegram,
 };
 use crate::store::{
     AcceptOutcome, DeliveryAttemptState, DeliveryDirection, DeliveryState, JobId, NewDelivery,
@@ -40,6 +40,7 @@ const DEFAULT_MAX_CATCHUP_AGE_MS: i64 = 24 * 60 * 60 * 1_000;
 const DEFAULT_MAX_FILE_BYTES: u64 = 20_000_000;
 const TELEGRAM_PAYLOAD_PREFIX: &[u8] = b"ATB_RT1\n";
 const ARMADA_PAYLOAD_PREFIX: &[u8] = b"ATB_A1\n";
+const TELEGRAM_ATTRIBUTION_PREFIX: &str = "✈️ ";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1645,38 +1646,21 @@ fn accept_event(
         }
     }
 
-    let reply_destination_id = if operation == DeliveryOperation::Create {
-        event
-            .reply_to
-            .as_ref()
-            .filter(|reply| {
-                reply.source == event.source
-                    && source_id_matches(reply.source, &reply.source_event_id)
-            })
-            .map(|reply| store.message_link(&event.route_id, direction, &reply.source_event_id))
-            .transpose()?
-            .flatten()
-            .and_then(|link| {
-                link.destination_message_id
-                    .split(',')
-                    .next()
-                    .map(str::to_owned)
-            })
-    } else {
-        None
-    };
-
     let supported = base_supported
         && (create_supported || (mutation_supported && !target_destination_ids.is_empty()));
     let Some(payload) = supported
-        .then(|| {
-            render_delivery_payload(
+        .then(|| -> Result<_, StoreError> {
+            let (reply_destination_id, reply_excerpt) =
+                resolve_reply(store, &event, direction, operation)?;
+            Ok(render_delivery_payload(
                 &event,
                 operation,
                 target_destination_ids,
                 reply_destination_id,
-            )
+                reply_excerpt,
+            ))
         })
+        .transpose()?
         .flatten()
     else {
         if let Some(cursor) = cursor {
@@ -1702,6 +1686,49 @@ fn accept_event(
             AcceptOutcome::Duplicate(_) => IntakeOutcome::Duplicate,
         },
     )
+}
+
+fn resolve_reply(
+    store: &Store,
+    event: &BridgeEvent,
+    direction: DeliveryDirection,
+    operation: DeliveryOperation,
+) -> Result<(Option<String>, Option<String>), StoreError> {
+    let Some(reply) = event
+        .reply_to
+        .as_ref()
+        .filter(|_| operation == DeliveryOperation::Create)
+    else {
+        return Ok((None, None));
+    };
+    let excerpt = event.reply_quote.as_deref().unwrap_or_default();
+    if reply.source == event.source && source_id_matches(reply.source, &reply.source_event_id) {
+        if let Some(target) = store
+            .message_link(&event.route_id, direction, &reply.source_event_id)?
+            .and_then(|link| {
+                link.destination_message_id
+                    .split(',')
+                    .next()
+                    .map(str::to_owned)
+            })
+        {
+            return Ok((Some(target), None));
+        }
+        if direction == DeliveryDirection::ArmadaToTelegram
+            && excerpt.starts_with(TELEGRAM_ATTRIBUTION_PREFIX)
+            && store
+                .message_link_by_destination(
+                    &event.route_id,
+                    DeliveryDirection::TelegramToArmada,
+                    source_id_for_destination_lookup(reply.source, &reply.source_event_id),
+                )?
+                .is_some()
+            && let Some(attributed) = telegram_mirror_excerpt(excerpt)
+        {
+            return Ok((None, Some(attributed)));
+        }
+    }
+    Ok((None, Some(clean_reply_excerpt(excerpt))))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2097,25 +2124,15 @@ fn attribution_header(event: &BridgeEvent) -> Option<String> {
             if user_id.is_none() && sender_chat_id.is_none() {
                 return None;
             }
-            let handle = clean_header(username.as_deref()).map(|name| {
-                let name = name.trim_start_matches('@');
-                // Reply previews show the raw message, including Markdown escapes.
-                // Telegram handles contain only letters, digits, and underscores.
-                let name = if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                    name.to_owned()
-                } else {
-                    escape_armada_header(name)
-                };
-                format!("@{name}")
-            });
+            let handle = clean_telegram_handle(username.as_deref());
             let display_name =
                 clean_header(display_name.as_deref()).map(|name| escape_armada_header(&name));
             let name = match (handle, display_name) {
-                (Some(handle), Some(display_name)) => format!("{handle} \\({display_name}\\)"),
+                (Some(handle), Some(display_name)) => format!("{handle} ({display_name})"),
                 (Some(name), None) | (None, Some(name)) => name,
                 (None, None) => "Telegram user".into(),
             };
-            Some(format!("✈️ {name}"))
+            Some(format!("{TELEGRAM_ATTRIBUTION_PREFIX}{name}"))
         }
         _ => None,
     }
@@ -2126,6 +2143,7 @@ fn render_delivery_payload(
     operation: DeliveryOperation,
     target_destination_ids: Vec<String>,
     reply_destination_id: Option<String>,
+    reply_excerpt: Option<String>,
 ) -> Option<Vec<u8>> {
     if operation == DeliveryOperation::Delete {
         return match event.source {
@@ -2158,36 +2176,9 @@ fn render_delivery_payload(
     {
         let _ = write!(header, "\n(album {index}/{total})");
     }
-    let reply_prefix = (event.reply_to.is_some() && reply_destination_id.is_none())
-        .then(|| fallback_reply_prefix(event));
     match event.source {
         Source::Armada => {
-            let mut body = parse_armada_markdown(&event.body);
-            if let Some(prefix) = reply_prefix {
-                body = prepend_plain(&prefix, &body);
-            }
-            let header_characters = header.chars().count() + 1;
-            let body_limit = MAX_TEXT_CHARACTERS
-                .saturating_sub(header_characters)
-                .saturating_sub(32)
-                .max(1);
-            let mut body_chunks = split_for_telegram(&body, body_limit);
-            if body_chunks.is_empty() {
-                body_chunks.push(RichText::plain(""));
-            }
-            let total = body_chunks.len();
-            let chunks = body_chunks
-                .iter()
-                .enumerate()
-                .map(|(index, chunk)| {
-                    let prefix = if total == 1 {
-                        format!("{header}\n")
-                    } else {
-                        format!("{header}\n(part {}/{total})\n", index + 1)
-                    };
-                    to_telegram(&prepend_plain(&prefix, chunk))
-                })
-                .collect::<Vec<_>>();
+            let chunks = render_telegram_chunks(&header, &event.body, reply_excerpt.as_deref());
             if operation == DeliveryOperation::Edit && chunks.len() != 1 {
                 return None;
             }
@@ -2211,7 +2202,13 @@ fn render_delivery_payload(
             if let Some(origin) = forwarded_source(event) {
                 body = prepend_plain(&format!("Forwarded from {origin}\n"), &body);
             }
-            if let Some(prefix) = reply_prefix {
+            if let Some(excerpt) = reply_excerpt {
+                let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+                let prefix = if excerpt.is_empty() {
+                    "↪ earlier message\n".to_owned()
+                } else {
+                    format!("↪ “{excerpt}”\n")
+                };
                 body = prepend_plain(&prefix, &body);
             }
             encode_armada_payload(&ArmadaDeliveryPayload {
@@ -2227,30 +2224,110 @@ fn render_delivery_payload(
     }
 }
 
-fn fallback_reply_prefix(event: &BridgeEvent) -> String {
-    let quote = event.reply_quote.as_deref().map_or_else(
-        || "earlier message".to_owned(),
-        |quote| {
-            let cleaned: String = quote
-                .chars()
-                .map(|character| {
-                    if character.is_control() || is_invisible_override(character) {
-                        ' '
-                    } else {
-                        character
-                    }
-                })
-                .take(160)
-                .collect();
-            let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-            if cleaned.is_empty() {
-                "earlier message".to_owned()
+fn render_telegram_chunks(
+    header: &str,
+    body: &str,
+    reply_excerpt: Option<&str>,
+) -> Vec<TelegramMessage> {
+    let body = parse_armada_markdown(body);
+    let reply_prefix = reply_excerpt.map(telegram_reply_prefix);
+    let reply_characters = reply_prefix
+        .as_ref()
+        .map_or(0, |prefix| prefix.text.chars().count());
+    let header_characters = header.chars().count() + 1;
+    let body_limit = MAX_TEXT_CHARACTERS
+        .saturating_sub(header_characters)
+        .saturating_sub(reply_characters)
+        .saturating_sub(32)
+        .max(1);
+    let mut body_chunks = split_for_telegram(&body, body_limit);
+    if body_chunks.is_empty() {
+        body_chunks.push(RichText::plain(""));
+    }
+    // Split the body on its own so a break in the excerpt cannot create a quote-only chunk.
+    if let Some(prefix) = reply_prefix {
+        let first = &mut body_chunks[0];
+        *first = prepend_plain(&prefix.text, first);
+        first.spans.extend(prefix.spans);
+    }
+    let total = body_chunks.len();
+    body_chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let prefix = if total == 1 {
+                format!("{header}\n")
             } else {
-                format!("“{cleaned}”")
+                format!("{header}\n(part {}/{total})\n", index + 1)
+            };
+            to_telegram(&prepend_plain(&prefix, chunk))
+        })
+        .collect()
+}
+
+fn clean_reply_excerpt(quote: &str) -> String {
+    quote
+        .chars()
+        .take(160)
+        .map(|character| {
+            if character != '\n' && (character.is_control() || is_invisible_override(character)) {
+                ' '
+            } else {
+                character
             }
-        },
-    );
-    format!("↪ {quote}\n")
+        })
+        .collect()
+}
+
+fn telegram_mirror_excerpt(quote: &str) -> Option<String> {
+    let (header, body) = quote
+        .strip_prefix(TELEGRAM_ATTRIBUTION_PREFIX)?
+        .split_once('\n')?;
+    let author = if let Some((handle, name)) = header
+        .split_once(" (")
+        .or_else(|| header.split_once(" \\("))
+        && handle.starts_with('@')
+        && let Some(handle) = clean_telegram_handle(Some(handle))
+        && let Some(name) = name.strip_suffix("\\)").or_else(|| name.strip_suffix(')'))
+    {
+        format!("{} ({handle})", unescape_armada_header(name))
+    } else if header.starts_with('@')
+        && let Some(handle) = clean_telegram_handle(Some(header))
+    {
+        handle
+    } else {
+        unescape_armada_header(header)
+    };
+    Some(format!("{author}\n\n{}", clean_reply_excerpt(body)))
+}
+
+fn clean_telegram_handle(value: Option<&str>) -> Option<String> {
+    // Backslashes can survive in old reply previews. Telegram usernames use letters,
+    // digits, and underscores, so a backslash in a username is always an escape.
+    let name = clean_header(value)?.replace('\\', "");
+    let name = name.trim_start_matches('@');
+    (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .then(|| format!("@{name}"))
+}
+
+fn telegram_reply_prefix(excerpt: &str) -> RichText {
+    let excerpt = excerpt
+        .trim()
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if excerpt.is_empty() {
+        return RichText::plain("↪ earlier message\n");
+    }
+    RichText {
+        text: format!("{excerpt}\n"),
+        spans: vec![RichSpan {
+            start: 0,
+            end: excerpt.len(),
+            style: RichStyle::Quote,
+        }],
+    }
 }
 
 fn encode_telegram_payload(
@@ -2320,15 +2397,34 @@ fn decode_armada_payload(payload: &[u8]) -> Result<ArmadaDeliveryPayload, Servic
 fn escape_armada_header(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
-        if matches!(
-            character,
-            '\\' | '`' | '*' | '_' | '~' | '[' | ']' | '(' | ')' | '<' | '>' | '|'
-        ) {
+        if armada_header_escape(character) {
             escaped.push('\\');
         }
         escaped.push(character);
     }
     escaped
+}
+
+fn unescape_armada_header(value: &str) -> String {
+    let mut characters = value.chars().peekable();
+    let mut text = String::with_capacity(value.len());
+    while let Some(character) = characters.next() {
+        if character == '\\'
+            && let Some(escaped) = characters.next_if(|next| armada_header_escape(*next))
+        {
+            text.push(escaped);
+        } else {
+            text.push(character);
+        }
+    }
+    text
+}
+
+const fn armada_header_escape(character: char) -> bool {
+    matches!(
+        character,
+        '\\' | '`' | '*' | '_' | '~' | '[' | ']' | '(' | ')' | '<' | '>' | '|'
+    )
 }
 
 fn clean_header(value: Option<&str>) -> Option<String> {

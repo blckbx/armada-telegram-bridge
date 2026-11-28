@@ -362,13 +362,14 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
         (
             Some("steff2021"),
             Some("Steffen"),
-            "✈️ @steff2021 \\(Steffen\\)\nhello",
+            "✈️ @steff2021 (Steffen)\nhello",
         ),
         (
             Some("bob_bot"),
             Some("[Bob]\n\u{202e}Builder"),
-            "✈️ @bob_bot \\(\\[Bob\\] Builder\\)\nhello",
+            "✈️ @bob_bot (\\[Bob\\] Builder)\nhello",
         ),
+        (Some(r"bob\_bot"), Some("Bob"), "✈️ @bob_bot (Bob)\nhello"),
         (Some("bob"), Some(" \n "), "✈️ @bob\nhello"),
         (None, Some("Steffen"), "✈️ Steffen\nhello"),
         (None, None, "✈️ Telegram user\nhello"),
@@ -399,7 +400,7 @@ fn attribution_uses_usernames_and_neutralizes_header_markup_and_controls() {
 }
 
 #[tokio::test]
-async fn rich_text_crosses_both_transports_and_long_armada_text_splits_safely() {
+async fn rich_text_crosses_both_transports() {
     let data = tempfile::tempdir().expect("temporary data directory");
     let store = Store::open(data.path()).expect("store opens");
     let mut service =
@@ -474,18 +475,46 @@ async fn rich_text_crosses_both_transports_and_long_armada_text_splits_safely() 
         .expect("Telegram rich text dispatches");
     assert_eq!(
         service.concord().sent()[0].1,
-        "✈️ @bob \\(Bob Builder\\)\n**😀** hello"
+        "✈️ @bob (Bob Builder)\n**😀** hello"
     );
+}
 
+#[tokio::test]
+async fn long_armada_reply_splits_with_the_quote_in_the_first_chunk() {
+    let data = tempfile::tempdir().expect("temporary data directory");
+    let store = Store::open(data.path()).expect("store opens");
+    let mut service =
+        BridgeService::new(store, telegram_fake(), concord_fake(), clock(), settings());
+    service.initialize().await.expect("startup succeeds");
     let long_body = format!("**{}**", "word 👨‍👩‍👧‍👦 ".repeat(500));
-    let long = armada_message("long", "cursor-long", ALICE_NPUB, Some("Alice"), &long_body);
+    let mut long = armada_message("long", "cursor-long", ALICE_NPUB, Some("Alice"), &long_body);
+    long.event.reply_to = Some(SourceMessageRef {
+        source: Source::Armada,
+        source_event_id: "armada:not-mirrored".to_owned(),
+    });
+    long.event.reply_quote = Some("First line\nSecond line".to_owned());
     service.accept_armada(long).expect("long message queues");
     service
         .dispatch_pending()
         .await
         .expect("long message splits and dispatches");
-    assert!(service.telegram().sent().len() >= 3);
-    for (_, text) in &service.telegram().sent()[1..] {
+    assert!(service.telegram().sent().len() >= 2);
+    assert!(
+        service.telegram().sent()[0]
+            .1
+            .contains("First line\nSecond line\nword")
+    );
+    assert_eq!(
+        service.telegram().sent_entities()[0].first().unwrap().kind,
+        TelegramEntityKind::Blockquote
+    );
+    assert!(
+        service.telegram().sent_entities()[1..]
+            .iter()
+            .flatten()
+            .all(|entity| entity.kind != TelegramEntityKind::Blockquote)
+    );
+    for (_, text) in service.telegram().sent() {
         assert!(text.chars().count() <= 4_096);
         assert!(!text.ends_with('\u{200d}'));
     }
@@ -1382,19 +1411,20 @@ async fn replies_edits_and_author_deletes_use_only_owned_armada_links() {
     );
     service.dispatch_pending().await.expect("reply dispatches");
     assert_eq!(service.telegram().replies()[0].1, target);
+    assert!(service.telegram().replies()[0].2.ends_with("\nanswer"));
 
     let mut missing_reply = armada_message(
         "missing-reply",
         "conversation:3",
         "npub1bob",
         None,
-        "fallback",
+        "**fallback**",
     );
     missing_reply.event.reply_to = Some(SourceMessageRef {
         source: Source::Armada,
         source_event_id: "armada:not-mirrored".to_owned(),
     });
-    missing_reply.event.reply_quote = Some("unsafe\u{202e} quote\nline".to_owned());
+    missing_reply.event.reply_quote = Some("💬 unsafe\u{202e} *quote*\nline".to_owned());
     service
         .accept_armada(missing_reply)
         .expect("fallback reply accepted");
@@ -1403,14 +1433,37 @@ async fn replies_edits_and_author_deletes_use_only_owned_armada_links() {
         .await
         .expect("fallback dispatches");
     assert_eq!(service.telegram().replies().len(), 1);
-    assert!(
-        service
-            .telegram()
-            .sent()
-            .last()
-            .expect("fallback was sent")
-            .1
-            .contains("↪ “unsafe quote line”")
+    let quote = "💬 unsafe *quote*\nline";
+    let text = &service
+        .telegram()
+        .sent()
+        .last()
+        .expect("fallback was sent")
+        .1;
+    let header = text
+        .strip_suffix(&format!("{quote}\nfallback"))
+        .expect("quote precedes the reply body");
+    assert!(header.ends_with('\n'));
+    let quote_offset = u32::try_from(header.encode_utf16().count()).expect("short header");
+    let quote_length = u32::try_from(quote.encode_utf16().count()).expect("short quote");
+    assert_eq!(
+        service.telegram().sent_entities().last().unwrap(),
+        &[
+            TelegramEntity {
+                kind: TelegramEntityKind::Blockquote,
+                offset: quote_offset,
+                length: quote_length,
+                url: None,
+                language: None,
+            },
+            TelegramEntity {
+                kind: TelegramEntityKind::Bold,
+                offset: quote_offset + quote_length + 1,
+                length: 8,
+                url: None,
+                language: None,
+            },
+        ]
     );
 
     let inline = armada_message(
@@ -1476,6 +1529,72 @@ async fn replies_edits_and_author_deletes_use_only_owned_armada_links() {
 }
 
 #[tokio::test]
+async fn armada_reply_quotes_the_original_telegram_author_and_message() {
+    let data = tempfile::tempdir().expect("temporary data directory");
+    let mut service = BridgeService::new(
+        Store::open(data.path()).expect("store opens"),
+        telegram_fake(),
+        concord_fake(),
+        clock(),
+        settings(),
+    );
+    service.initialize().await.expect("service initializes");
+    service.telegram_mut().push_inbound(telegram_message(
+        70,
+        71,
+        Some(41),
+        Some("bob_tg_team"),
+        Some("Bob"),
+        "Hello",
+    ));
+    service
+        .poll_telegram_once()
+        .await
+        .expect("Bob's message is accepted");
+    service
+        .dispatch_pending()
+        .await
+        .expect("Bob's message reaches Armada");
+
+    let mirrored = service.concord().sent()[0].1.clone();
+    assert_eq!(mirrored, "✈️ @bob_tg_team (Bob)\nHello");
+    for (id, excerpt) in [
+        ("current", mirrored),
+        ("legacy", format!("{}\nHello", r"✈️ @bob\\_tg_team \(Bob\)")),
+    ] {
+        let mut reply = armada_message(id, id, ALICE_NPUB, Some("Alice"), "Hey");
+        reply.event.reply_to = Some(SourceMessageRef {
+            source: Source::Armada,
+            source_event_id: format!("armada:{:064x}", 1),
+        });
+        reply.event.reply_quote = Some(excerpt);
+        service
+            .accept_armada(reply)
+            .expect("Alice's reply is accepted");
+    }
+    service
+        .dispatch_pending()
+        .await
+        .expect("Alice's reply reaches Telegram");
+
+    let header = "⛵ Alice (npub1alice00…0000)\n";
+    let quote = "Bob (@bob_tg_team)\n\nHello";
+    assert_eq!(service.telegram().sent().len(), 2);
+    for ((_, text), entities) in service
+        .telegram()
+        .sent()
+        .iter()
+        .zip(service.telegram().sent_entities())
+    {
+        assert_eq!(text, &format!("{header}{quote}\nHey"));
+        let entity = &entities[0];
+        assert_eq!(entity.kind, TelegramEntityKind::Blockquote);
+        assert_eq!(entity.offset as usize, header.encode_utf16().count());
+        assert_eq!(entity.length as usize, quote.encode_utf16().count());
+    }
+}
+
+#[tokio::test]
 async fn telegram_conversation_mutations_use_mapped_armada_messages() {
     let data = tempfile::tempdir().expect("temporary data directory");
     let mut service = BridgeService::new(
@@ -1492,12 +1611,15 @@ async fn telegram_conversation_mutations_use_mapped_armada_messages() {
         71,
         Some(41),
         Some("wario_is_here"),
-        None,
+        Some("Wario"),
         "hello",
     ));
     service.poll_telegram_once().await.expect("create accepted");
     service.dispatch_pending().await.expect("create dispatches");
-    assert_eq!(service.concord().sent()[0].1, "✈️ @wario_is_here\nhello");
+    assert_eq!(
+        service.concord().sent()[0].1,
+        "✈️ @wario_is_here (Wario)\nhello"
+    );
     let armada_target = format!("{:064x}", 1);
 
     let source_target = SourceMessageRef {
