@@ -28,7 +28,8 @@ impersonate users with native destination reactions.
 **Important:** bridging changes the privacy boundary; Telegram receives plaintext.
 Delivery is at least once and can duplicate messages/files after ambiguous sends
 or restoring old backups. User deletions, attachment edits and split-message
-edits are not relayed. No automatic retention period is enforced.
+edits are not relayed. The bridge clears queue payloads on successful delivery
+and clears previously delivered payloads when it opens the database.
 
 No production release or tag has been created. See RELEASE_GATE.md for incomplete
 live, image-provenance, deployment and operator acceptance requirements, and

@@ -27,7 +27,7 @@ live end-to-end matrix. Run `cargo test --locked --all-targets --all-features`.
 | Missing keys, incomplete rekey, removal | `rekey_and_removed_membership_quarantine_until_explicit_recovery` | Pending disposable-channel rotation/removal; fake states do not prove cryptography |
 | Telegram removal/403 | `telegram_removal_forbidden_is_terminal_not_a_retry_storm` | Pending disposable-group removal/re-invite |
 | Exact route/topic/identity scope | `router_rejects_wrong_source_route_mutation_and_bridge_identities`, Telegram filtering suite, Concord normalization tests | Pending negative route checks |
-| Empty-database upgrade to schema 5 | `migrations_are_repeatable_and_enable_required_sqlite_guards` | No previously released database schemas exist |
+| Database upgrade to schema 6 and delivered-payload cleanup | `migrations_are_repeatable_and_enable_required_sqlite_guards`, `delivered_payloads_are_cleared_on_commit_and_from_older_databases` | No previously released database schemas exist |
 | Rollback and recovery | `newer_schema_is_rejected_without_downgrading_and_backup_still_opens`, stopped backup/restore drill | Pending full live SDK-state restoration |
 | Lock, health, SIGTERM | operations suite, shutdown/cancellation tests | Pending target-host supervisor smoke |
 | Optional reply/edit/expiry | P10 service/adapter tests and opt-in live shapes | Pending; live deletion forwarding is not supported |

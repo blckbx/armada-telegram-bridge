@@ -27,12 +27,16 @@ files behind. Disk deletion is not secure erasure. Armada attachments are
 encrypted for the SDK's Blossom upload path; relays and Telegram have independent
 retention policies that this bridge cannot enforce.
 
-Current retention is not automatic: the store has a payload-cleanup primitive,
-but the runtime does not schedule it yet. Delivered/pending/dead-letter payloads,
-mapping metadata, SDK caches, and backups may remain until operator-managed
-removal. Do not promise a fixed retention interval. Stop the bridge and follow a
-reviewed data-removal procedure; removing the entire state loses deduplication,
-recovery, keys, and history. Do not delete arbitrary database rows while running.
+The bridge clears the encrypted queue payload in the same SQLite transaction
+that records successful delivery. Existing delivered payloads are cleared when
+the updated bridge next opens the database. Pending and dead-lettered payloads
+remain available for retry. Explicitly skipping a dead-lettered job also clears
+its payload.
+
+Message mappings and delivery metadata remain for deduplication, replies, edits,
+and expiry. Clearing a queue payload is a logical database change. Older
+database pages, write-ahead logs, SDK caches, and backups can still contain
+message data.
 
 Deleting an original message does **not** currently delete its mirror. Scheduled
 Armada expiry attempts to delete the Telegram mirror, but outages, API limits,

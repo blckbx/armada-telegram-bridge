@@ -151,7 +151,7 @@ fn newer_schema_is_rejected_without_downgrading_and_backup_still_opens() {
             .expect("rollback opens")
             .schema_version()
             .expect("version"),
-        5
+        6
     );
 }
 
@@ -175,7 +175,7 @@ fn migrations_are_repeatable_and_enable_required_sqlite_guards() {
 
     for _ in 0..2 {
         let store = Store::open(directory.path()).expect("store should open repeatedly");
-        assert_eq!(store.schema_version().expect("version should load"), 5);
+        assert_eq!(store.schema_version().expect("version should load"), 6);
         assert_eq!(
             store.journal_mode().expect("journal mode should load"),
             "wal"
@@ -555,6 +555,7 @@ fn delivery_receipt_atomically_marks_job_and_records_message_link() {
         .expect("job query should work")
         .expect("job should exist");
     assert_eq!(second.status, JobStatus::Pending);
+    assert_eq!(second.payload.as_deref(), Some(b"two".as_slice()));
     assert!(
         store
             .message_link(&route_id, DeliveryDirection::ArmadaToTelegram, "armada:two")
@@ -601,7 +602,7 @@ fn pending_jobs_and_cursors_survive_reopen() {
 }
 
 #[test]
-fn payloads_are_encrypted_at_rest_and_erased_after_delivery_retention() {
+fn delivered_payloads_are_cleared_on_commit_and_from_older_databases() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let route_id = route("alpha");
     let body = "private-message-body-unique-7f18";
@@ -643,25 +644,75 @@ fn payloads_are_encrypted_at_rest_and_erased_after_delivery_retention() {
         Some(body.as_bytes())
     );
 
+    let connection =
+        rusqlite::Connection::open(directory.path().join("bridge.sqlite3")).expect("fixture");
+    let cipher: Vec<u8> = connection
+        .query_row(
+            "SELECT payload_cipher FROM outbox_jobs WHERE id = ?1",
+            [job_id.get()],
+            |row| row.get(0),
+        )
+        .expect("read encrypted fixture");
+
     store
         .mark_delivered(job_id, "telegram:private", 1_000)
         .expect("receipt should commit");
-    assert_eq!(
-        store
-            .cleanup_delivered_payloads(999)
-            .expect("early cleanup should work"),
-        0
-    );
-    assert_eq!(
-        store
-            .cleanup_delivered_payloads(1_000)
-            .expect("retention cleanup should work"),
-        1
-    );
-    let cleaned = store
+    let delivered = store.job(job_id).expect("job query").expect("job exists");
+    assert_eq!(delivered.status, JobStatus::Delivered);
+    assert!(delivered.payload.is_none());
+
+    // Older versions kept the encrypted payload after committing the receipt.
+    drop(store);
+    connection
+        .execute_batch("ALTER TABLE message_links DROP COLUMN editable; PRAGMA user_version = 5;")
+        .expect("simulate old schema");
+    connection
+        .execute(
+            "UPDATE outbox_jobs SET payload_cipher = ?2 WHERE id = ?1",
+            rusqlite::params![job_id.get(), cipher],
+        )
+        .expect("simulate a delivered payload from an older version");
+    drop(connection);
+    let reopened = Store::open(directory.path()).expect("reopen older store");
+    let cleaned = reopened
         .job(job_id)
-        .expect("job query should work")
-        .expect("job should exist");
+        .expect("job query")
+        .expect("job exists");
     assert_eq!(cleaned.status, JobStatus::Delivered);
     assert!(cleaned.payload.is_none());
+    let link = reopened
+        .message_link(
+            &route_id,
+            DeliveryDirection::ArmadaToTelegram,
+            "armada:private",
+        )
+        .expect("link query")
+        .expect("link survives upgrade");
+    assert!(link.editable);
+}
+
+#[test]
+fn delivered_mutation_payload_is_cleared_on_commit() {
+    let directory = tempfile::tempdir().expect("directory");
+    let route_id = route("alpha");
+    let mut store = Store::open(directory.path()).expect("store");
+    store.register_route(&route_id).expect("route");
+    let job_id = store
+        .accept_inbound(&delivery(
+            &route_id,
+            DeliveryDirection::TelegramToArmada,
+            "telegram:edit",
+            "new message text",
+            "1",
+            1,
+        ))
+        .expect("enqueue mutation")
+        .job_id();
+
+    store
+        .mark_mutation_delivered(job_id, 2)
+        .expect("commit mutation");
+    let delivered = store.job(job_id).expect("job query").expect("job exists");
+    assert_eq!(delivered.status, JobStatus::Delivered);
+    assert!(delivered.payload.is_none());
 }

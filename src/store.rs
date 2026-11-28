@@ -18,7 +18,7 @@ const DATABASE_FILE: &str = "bridge.sqlite3";
 const SPOOL_KEY_FILE: &str = "spool.key";
 const SPOOL_KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 24;
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 const MIGRATION_1: &str = r"
 CREATE TABLE IF NOT EXISTS routes (
@@ -418,7 +418,9 @@ pub struct MessageLink {
     pub destination_message_id: String,
     /// Authenticated stable author that created the source message.
     pub source_author_id: String,
-    /// Original delivery job for checking whether an edit is representable.
+    /// Whether the original payload supports edits to a single-message mirror.
+    pub editable: bool,
+    /// Original delivery job, used to track mirrored reactions.
     pub job_id: JobId,
 }
 
@@ -480,10 +482,10 @@ impl Store {
         }
         let spool_key = load_or_create_spool_key(data_dir)?;
         let database_path = data_dir.join(DATABASE_FILE);
-        let connection = Connection::open(&database_path)?;
+        let mut connection = Connection::open(&database_path)?;
         restrict_database_permissions(&database_path)?;
         configure_connection(&connection)?;
-        migrate(&connection)?;
+        migrate(&mut connection, &spool_key)?;
         Ok(Self {
             connection,
             spool_key,
@@ -692,7 +694,7 @@ impl Store {
         Ok(jobs)
     }
 
-    /// Atomically records the destination receipt and marks a job delivered.
+    /// Atomically records the destination receipt and clears the delivered payload.
     ///
     /// # Errors
     ///
@@ -725,37 +727,47 @@ impl Store {
             return Err(StoreError::InvalidInput("destination message ID"));
         }
         let transaction = self.connection.transaction()?;
-        let row: Option<(String, String, String, String, String)> = transaction
+        let row = transaction
             .query_row(
                 "SELECT o.route_id, o.direction, i.source_event_id, o.status,
-                        i.source_author_id
+                        i.source_author_id, o.payload_cipher
                  FROM outbox_jobs o
                  JOIN inbox_events i ON i.id = o.inbox_event_id
                  WHERE o.id = ?1",
                 [job_id.get()],
                 |row| {
                     Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<Vec<u8>>>(5)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((route_id, direction, source_message_id, status, source_author_id)) = row else {
+        let Some((route_id, direction, source_message_id, status, source_author_id, cipher)) = row
+        else {
             return Err(StoreError::JobNotFound(job_id));
         };
         if status != "pending" {
             return Err(StoreError::InvalidJobState(job_id));
         }
+        let cipher = cipher.ok_or(StoreError::CorruptData("pending job has no payload"))?;
+        let editable = stored_payload_allows_edit(
+            &self.spool_key,
+            &route_id,
+            &direction,
+            &source_message_id,
+            &cipher,
+        )?;
 
         transaction.execute(
             "INSERT INTO message_links
              (job_id, route_id, direction, source_message_id, destination_message_id,
-              created_at_ms, source_author_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+              created_at_ms, source_author_id, editable)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 job_id.get(),
                 &route_id,
@@ -763,7 +775,8 @@ impl Store {
                 source_message_id,
                 destination_message_id,
                 delivered_at_ms,
-                source_author_id
+                source_author_id,
+                editable
             ],
         )?;
         if direction == DeliveryDirection::ArmadaToTelegram.as_database_value()
@@ -778,7 +791,7 @@ impl Store {
         }
         let changed = transaction.execute(
             "UPDATE outbox_jobs
-             SET status = 'delivered', delivered_at_ms = ?2
+             SET status = 'delivered', delivered_at_ms = ?2, payload_cipher = NULL
              WHERE id = ?1 AND status = 'pending'",
             params![job_id.get(), delivered_at_ms],
         )?;
@@ -795,7 +808,7 @@ impl Store {
         Ok(())
     }
 
-    /// Marks a mutation job delivered without creating another source link.
+    /// Marks a mutation job delivered and clears its payload without creating another source link.
     ///
     /// # Errors
     ///
@@ -808,7 +821,7 @@ impl Store {
         let transaction = self.connection.transaction()?;
         let changed = transaction.execute(
             "UPDATE outbox_jobs
-             SET status = 'delivered', delivered_at_ms = ?2
+             SET status = 'delivered', delivered_at_ms = ?2, payload_cipher = NULL
              WHERE id = ?1 AND status = 'pending'",
             params![job_id.get(), delivered_at_ms],
         )?;
@@ -1184,7 +1197,7 @@ impl Store {
         Ok(self
             .connection
             .query_row(
-                "SELECT source_message_id, destination_message_id, source_author_id, job_id
+                "SELECT source_message_id, destination_message_id, source_author_id, job_id, editable
                  FROM message_links
                  WHERE route_id = ?1 AND direction = ?2 AND source_message_id = ?3",
                 params![
@@ -1198,6 +1211,7 @@ impl Store {
                         destination_message_id: row.get(1)?,
                         source_author_id: row.get(2)?,
                         job_id: JobId(row.get(3)?),
+                        editable: row.get(4)?,
                     })
                 },
             )
@@ -1220,7 +1234,7 @@ impl Store {
         Ok(self
             .connection
             .query_row(
-                "SELECT source_message_id, destination_message_id, source_author_id, job_id
+                "SELECT source_message_id, destination_message_id, source_author_id, job_id, editable
                  FROM message_links
                  WHERE route_id = ?1 AND direction = ?2
                    AND instr(',' || destination_message_id || ',', ',' || ?3 || ',') > 0",
@@ -1235,6 +1249,7 @@ impl Store {
                         destination_message_id: row.get(1)?,
                         source_author_id: row.get(2)?,
                         job_id: JobId(row.get(3)?),
+                        editable: row.get(4)?,
                     })
                 },
             )
@@ -1678,7 +1693,10 @@ fn configure_connection(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn migrate(connection: &Connection) -> Result<(), StoreError> {
+fn migrate(
+    connection: &mut Connection,
+    spool_key: &[u8; SPOOL_KEY_BYTES],
+) -> Result<(), StoreError> {
     let mut current: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current == 0 {
         connection.execute_batch(&format!("BEGIN IMMEDIATE;{MIGRATION_1}COMMIT;"))?;
@@ -1700,12 +1718,85 @@ fn migrate(connection: &Connection) -> Result<(), StoreError> {
         connection.execute_batch(&format!("BEGIN IMMEDIATE;{MIGRATION_5}COMMIT;"))?;
         current = 5;
     }
+    if current == 5 {
+        migrate_delivered_payloads(connection, spool_key)?;
+        current = 6;
+    }
     if current != SCHEMA_VERSION {
         return Err(StoreError::CorruptData(
             "unsupported database schema version",
         ));
     }
     Ok(())
+}
+
+fn migrate_delivered_payloads(
+    connection: &mut Connection,
+    spool_key: &[u8; SPOOL_KEY_BYTES],
+) -> Result<(), StoreError> {
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let current: u32 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if current == SCHEMA_VERSION {
+        return Ok(());
+    }
+    transaction.execute_batch(
+        "ALTER TABLE message_links ADD COLUMN editable INTEGER NOT NULL DEFAULT 0
+         CHECK (editable IN (0, 1));",
+    )?;
+    {
+        let mut statement = transaction.prepare(
+            "SELECT o.id, o.route_id, o.direction, i.source_event_id, o.payload_cipher
+             FROM outbox_jobs o
+             JOIN inbox_events i ON i.id = o.inbox_event_id
+             WHERE o.status = 'delivered' AND o.payload_cipher IS NOT NULL",
+        )?;
+        let mut rows = statement.query([])?;
+        let mut update_link =
+            transaction.prepare("UPDATE message_links SET editable = ?2 WHERE job_id = ?1")?;
+        while let Some(row) = rows.next()? {
+            let job_id: i64 = row.get(0)?;
+            let route_id: String = row.get(1)?;
+            let direction: String = row.get(2)?;
+            let source_event_id: String = row.get(3)?;
+            let cipher: Vec<u8> = row.get(4)?;
+            let editable = stored_payload_allows_edit(
+                spool_key,
+                &route_id,
+                &direction,
+                &source_event_id,
+                &cipher,
+            )?;
+            update_link.execute(params![job_id, editable])?;
+        }
+    }
+    transaction.execute_batch(
+        "UPDATE outbox_jobs SET payload_cipher = NULL
+         WHERE status = 'delivered' AND payload_cipher IS NOT NULL;
+         PRAGMA user_version = 6;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn stored_payload_allows_edit(
+    spool_key: &[u8; SPOOL_KEY_BYTES],
+    route_id: &str,
+    direction: &str,
+    source_event_id: &str,
+    cipher: &[u8],
+) -> Result<bool, StoreError> {
+    let route_id = RouteId::try_from(route_id)
+        .map_err(|_| StoreError::CorruptData("invalid stored route ID"))?;
+    let direction = DeliveryDirection::from_database_value(direction)?;
+    let payload = Zeroizing::new(decrypt(
+        spool_key,
+        cipher,
+        &associated_data(&route_id, direction, source_event_id),
+    )?);
+    Ok(crate::service::payload_allows_mirror_edit(
+        direction, &payload,
+    ))
 }
 
 fn validate_reactor(reactor_id: &str, display_name: Option<&str>) -> Result<(), StoreError> {

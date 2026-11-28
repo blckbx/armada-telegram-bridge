@@ -340,7 +340,9 @@ instance. An old backup can replay work delivered after the backup was created.
   token are unsupported.
 - Runtime logs deliberately contain fixed event names and counts rather than raw
   SDK errors, message bodies, credentials, usernames, or attachment URLs.
-- No automatic retention cleanup is currently scheduled.
+- The bridge clears message payloads from its delivery queue as soon as it
+  records successful delivery. Pending and dead-lettered jobs retain their
+  encrypted payloads for retry.
 
 For more detail, see:
 

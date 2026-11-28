@@ -11,7 +11,7 @@ approval of the operator's live membership/configuration.
 | Spool theft | AEAD payloads; private independent key; incomplete restore rejected | Protect both state and encrypted backups; host compromise defeats this boundary |
 | File remnants/hostile inputs | Bounded staging, safe filenames/types, cancellation cleanup and parser tests | Abrupt-kill leftovers, client content risks and OS caches remain |
 | False delete/expiry expectations | Ownership checks; ambiguous source deletion ignored | Communicate lack of guaranteed remote erasure |
-| Excess retention | Cleanup primitive exists | No scheduled cleanup: operator must accept/document retention before release |
+| Excess retention | Queue payloads cleared on delivery and previously delivered payloads cleared when SQLite is opened | Pending and dead-lettered payloads, metadata, caches, and backups remain subject to operator retention |
 | Untrusted supply chain | Locked dependencies, source scans, license/SBOM tooling | Image/native review, immutable pins and actual provenance still pending |
 
 No usernames, private room IDs, payloads, bot tokens, nsec values, or attachment

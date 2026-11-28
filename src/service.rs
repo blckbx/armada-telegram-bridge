@@ -1635,7 +1635,8 @@ fn accept_event(
             .transpose()?
             .flatten()
             .filter(|link| Some(link.source_author_id.as_str()) == author_id.as_deref())
-            && (operation != DeliveryOperation::Edit || editable_link(store, &link, direction)?)
+            && (operation != DeliveryOperation::Edit
+                || (link.editable && !link.destination_message_id.contains(',')))
         {
             target_destination_ids = link
                 .destination_message_id
@@ -1901,24 +1902,14 @@ fn source_matches_direction(source: Source, direction: DeliveryDirection) -> boo
     )
 }
 
-fn editable_link(
-    store: &Store,
-    link: &crate::store::MessageLink,
-    direction: DeliveryDirection,
-) -> Result<bool, StoreError> {
-    if link.destination_message_id.contains(',') {
-        return Ok(false);
-    }
-    let Some(payload) = store.job(link.job_id)?.and_then(|job| job.payload) else {
-        return Ok(false);
-    };
-    Ok(match direction {
-        DeliveryDirection::ArmadaToTelegram => decode_telegram_payload(&payload)
+pub(crate) fn payload_allows_mirror_edit(direction: DeliveryDirection, payload: &[u8]) -> bool {
+    match direction {
+        DeliveryDirection::ArmadaToTelegram => decode_telegram_payload(payload)
             .is_ok_and(|payload| payload.attachments.is_empty() && payload.chunks.len() == 1),
         DeliveryDirection::TelegramToArmada => {
-            decode_armada_payload(&payload).is_ok_and(|payload| payload.attachments.is_empty())
+            decode_armada_payload(payload).is_ok_and(|payload| payload.attachments.is_empty())
         }
-    })
+    }
 }
 
 fn stable_sender_id(event: &BridgeEvent) -> Option<String> {

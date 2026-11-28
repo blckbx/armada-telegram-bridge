@@ -34,9 +34,10 @@
 - Formatting is a safe common subset, not full Markdown/Telegram fidelity.
 - `doctor` is offline metadata validation, not a live connection/database-integrity
   test. Readiness is a recent scheduler observation, not continuous relay probing.
-- No automatic retention cleanup is scheduled. Queued and delivered payloads,
-  metadata, SDK caches and backups can remain indefinitely. Encryption at rest
-  does not protect against access to both the spool key and database.
+- Delivered queue payloads are cleared when delivery is recorded. Pending and
+  dead-lettered payloads, metadata, SDK caches, and backups can remain
+  indefinitely. Anyone with both the database and spool key can decrypt
+  retained queue payloads.
 - Locks protect one local directory, not duplicated identities across hosts.
   Network filesystems and active/active deployment are unsupported.
 - Source security scans and fuzz smoke do not constitute a security audit.
